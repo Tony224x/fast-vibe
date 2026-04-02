@@ -1,44 +1,54 @@
 # fast-vibe
 
-Web-based terminal multiplexer that runs **1 pilot + 4 worker** Claude Code instances in parallel with a control API.
+Web-based terminal multiplexer that runs **1 pilot + N workers** Claude Code instances in parallel, with a control API and a live preview panel.
 
 ```
-┌─────────────────────────────────────────┬──────────┐
-│  [📁 /path/to/project]       [Start]   │          │
-├─────────────────────────────────────────┤  Status  │
-│           PILOT (Claude Code)           │  Panel   │
-├───────────────┬─────────────────────────┤          │
-│   Worker 1    │    Worker 2             │          │
-├───────────────┼─────────────────────────┤          │
-│   Worker 3    │    Worker 4             │          │
-└───────────────┴─────────────────────────┴──────────┘
+┌────────────────────────────┬──────────────┬──────────┐
+│  [📁 /path/to/project] [⚙]│  Preview URL │          │
+├────────────────────────────┼──────────────┤  Status  │
+│      PILOT (Claude Code)   │              │  Panel   │
+├─────────┬──────────────────┤    iframe     │          │
+│Worker 1 │ Worker 2         │    preview    │          │
+├─────────┼──────────────────┤              │          │
+│Worker 3 │ Worker 4         │              │          │
+└─────────┴──────────────────┴──────────────┴──────────┘
 ```
+
+## Features
+
+- **Pilot + Workers** — 1 orchestrator Claude Code dispatches tasks to N workers via REST API
+- **Configurable workers** — 1 to 8 parallel instances (Settings modal)
+- **Live preview** — iframe panel to see your app running alongside the terminals
+- **Directory autocomplete** — type a path, get filesystem suggestions
+- **Auto-launch** — all terminals start `claude --dangerously-skip-permissions` with alias `c`
 
 ## How it works
 
-1. Choose a project directory in the web interface
-2. Click **Start** — spawns 5 terminals (1 pilot + 4 workers), each running `claude --dangerously-skip-permissions`
-3. The **pilot** Claude Code can control workers via the REST API:
+1. Open `http://localhost:3333`, enter a project directory (with autocomplete)
+2. Configure worker count and preview URL in **Settings** (⚙)
+3. Click **Start** — spawns 1 pilot + N workers, each running Claude Code
+4. The **pilot** controls workers via `curl`:
 
 ```bash
 # Send a task to worker 2
-curl -X POST http://localhost:3333/api/terminal/2/send \
+curl -s -X POST http://localhost:3333/api/terminal/2/send \
   -H "Content-Type: application/json" \
   -d '{"text":"implement the auth module"}'
 
-# Read worker 2 output (last 2000 chars)
-curl http://localhost:3333/api/terminal/2/output?last=2000
+# Read worker 2 output
+curl -s http://localhost:3333/api/terminal/2/output?last=3000
 ```
 
 ## Install
 
 ```bash
-git clone https://github.com/anthropics/fast-vibe.git
+git clone <repo-url>
 cd fast-vibe
 npm install
 ```
 
-> Requires Node.js 18+ and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed.
+> Requires Node.js 18+ and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed.  
+> On Windows, `node-pty` needs Visual Studio Build Tools.
 
 ## Usage
 
@@ -51,11 +61,14 @@ npm start
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/status` | Status of all 5 terminals |
-| `POST` | `/api/launch` | Start all terminals `{"cwd": "/path"}` |
+| `GET` | `/api/settings` | Get settings (workers, previewUrl) |
+| `POST` | `/api/settings` | Update settings `{"workers": 4, "previewUrl": "..."}` |
+| `POST` | `/api/launch` | Start terminals `{"cwd": "/path", "workers": 4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `POST` | `/api/terminal/:id/send` | Send text to terminal `{"text": "..."}` |
-| `GET` | `/api/terminal/:id/output?last=N` | Read last N chars of output |
+| `GET` | `/api/terminal/:id/output?last=N` | Read last N chars (ANSI stripped) |
+| `GET` | `/api/status` | Status of all terminals |
+| `GET` | `/api/browse?path=...` | Directory autocomplete suggestions |
 
 ## Stack
 
