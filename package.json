@@ -1,0 +1,15 @@
+{
+  "name": "fast-vibe",
+  "version": "1.0.0",
+  "description": "Web-based terminal multiplexer for 4 parallel Claude Code sessions",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "node-pty": "^1.0.0",
+    "ws": "^8.18.0"
+  }
+}

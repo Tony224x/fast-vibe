@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>fast-vibe</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="main">
+      <!-- Launch Bar -->
+      <div id="launch-bar">
+        <div class="launch-left">
+          <span class="launch-logo">fast-vibe</span>
+        </div>
+        <div class="launch-center">
+          <input type="text" id="cwd-input" placeholder="Project directory..." spellcheck="false" autocomplete="off">
+          <div id="autocomplete" class="hidden"></div>
+          <button id="btn-start">Start</button>
+          <button id="btn-stop" class="hidden">Stop</button>
+          <button id="btn-settings" title="Settings">&#9881;</button>
+        </div>
+        <div class="launch-right">
+          <span id="session-info"></span>
+        </div>
+      </div>
+
+      <!-- Terminals area (hidden until launched) -->
+      <div id="terminals" class="hidden">
+        <!-- Pilot -->
+        <div class="terminal-pane pilot" data-index="0">
+          <div class="pane-header">
+            <span class="pane-title">Pilot</span>
+            <span class="pane-status">
+              <span class="status-dot"></span>
+              <span class="status-text">--</span>
+            </span>
+          </div>
+          <div class="pane-body" id="term-0"></div>
+        </div>
+        <!-- Workers generated dynamically by JS -->
+        <div id="workers-grid"></div>
+      </div>
+
+      <!-- Welcome screen -->
+      <div id="welcome">
+        <div class="welcome-content">
+          <h1>fast-vibe</h1>
+          <p>1 Pilot + N Workers &mdash; Claude Code in parallel</p>
+          <p class="welcome-hint">Enter a project directory above and click <strong>Start</strong></p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Panel -->
+    <div id="preview" class="hidden">
+      <div id="preview-header">
+        <input type="text" id="preview-url" placeholder="http://localhost:3000" spellcheck="false">
+        <button id="btn-preview-go" title="Load">&#8594;</button>
+        <button id="btn-preview-refresh" title="Refresh">&#8635;</button>
+        <button id="btn-preview-close" title="Close preview">&#10005;</button>
+      </div>
+      <iframe id="preview-frame" src="about:blank"></iframe>
+    </div>
+
+    <!-- Sidebar -->
+    <div id="sidebar">
+      <div id="sidebar-header">
+        <h2>Status</h2>
+        <button id="btn-preview-toggle" title="Toggle preview">&#9726;</button>
+      </div>
+      <div id="status-list"></div>
+    </div>
+  </div>
+
+  <!-- Settings Modal -->
+  <div id="settings-overlay" class="hidden">
+    <div id="settings-modal">
+      <h3>Settings</h3>
+      <div class="setting-row">
+        <label for="setting-workers">Workers</label>
+        <input type="number" id="setting-workers" min="1" max="8" value="4">
+        <span class="setting-hint">1-8 parallel Claude Code instances</span>
+      </div>
+      <div class="setting-row">
+        <label for="setting-preview-url">Preview URL</label>
+        <input type="text" id="setting-preview-url" placeholder="http://localhost:3000">
+        <span class="setting-hint">Auto-open preview with this URL on Start</span>
+      </div>
+      <div class="setting-actions">
+        <button id="btn-settings-cancel">Cancel</button>
+        <button id="btn-settings-save">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
