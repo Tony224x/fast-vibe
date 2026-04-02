@@ -41,7 +41,8 @@ app.get('/api/status', (req, res) => {
 // ── Directory autocomplete ──
 
 app.get('/api/browse', (req, res) => {
-  const partial = (req.query.path || '').replace(/\//g, path.sep);
+  const raw = req.query.path || '';
+  const partial = raw ? raw.replace(/\//g, path.sep) : (process.env.USERPROFILE || process.env.HOME || 'C:\\');
   let dir, prefix;
 
   try {
@@ -99,6 +100,18 @@ app.post('/api/terminal/:id/send', (req, res) => {
   }
   const ok = ptyManager.sendInput(id, text);
   res.json({ ok, terminal: id });
+});
+
+app.post('/api/terminal/:id/compact', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const ok = ptyManager.sendCommand(id, '/compact');
+  res.json({ ok, terminal: id, action: 'compact' });
+});
+
+app.post('/api/terminal/:id/clear', (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const ok = ptyManager.sendCommand(id, '/clear');
+  res.json({ ok, terminal: id, action: 'clear' });
 });
 
 app.get('/api/terminal/:id/output', (req, res) => {

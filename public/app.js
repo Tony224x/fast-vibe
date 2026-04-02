@@ -7,12 +7,12 @@ let launched = false;
 let previewVisible = false;
 
 const THEME = {
-  background: '#0d1117', foreground: '#c9d1d9', cursor: '#58a6ff', cursorAccent: '#0d1117',
-  selectionBackground: 'rgba(88, 166, 255, 0.3)',
-  black: '#484f58', red: '#ff7b72', green: '#3fb950', yellow: '#d29922',
-  blue: '#58a6ff', magenta: '#bc8cff', cyan: '#39d353', white: '#b1bac4',
-  brightBlack: '#6e7681', brightRed: '#ffa198', brightGreen: '#56d364', brightYellow: '#e3b341',
-  brightBlue: '#79c0ff', brightMagenta: '#d2a8ff', brightCyan: '#56d364', brightWhite: '#f0f6fc',
+  background: '#1E1A17', foreground: '#F5EFE8', cursor: '#E8601A', cursorAccent: '#1E1A17',
+  selectionBackground: 'rgba(232, 96, 26, 0.25)',
+  black: '#3D3530', red: '#ff7b72', green: '#3fb950', yellow: '#E8601A',
+  blue: '#F0843F', magenta: '#bc8cff', cyan: '#D4C9BD', white: '#F5EFE8',
+  brightBlack: '#8A7E74', brightRed: '#ffa198', brightGreen: '#56d364', brightYellow: '#F0843F',
+  brightBlue: '#E8601A', brightMagenta: '#d2a8ff', brightCyan: '#D4C9BD', brightWhite: '#FFFFFF',
 };
 
 // ── Init ──
@@ -323,8 +323,20 @@ function updateSidebar(statuses) {
       <div class="status-card-info">
         PID: ${s.pid || '-'} &middot; ${s.alive ? elapsed(s.startedAt) : 'stopped'}
       </div>
+      ${s.alive ? `<div class="status-card-actions">
+        <button class="btn-ctx" onclick="event.stopPropagation();compactTerminal(${i})" title="Compact context">&#8860; compact</button>
+        <button class="btn-ctx btn-ctx-danger" onclick="event.stopPropagation();clearTerminal(${i})" title="Clear context">&#8855; clear</button>
+      </div>` : ''}
     </div>
   `).join('');
+}
+
+async function compactTerminal(id) {
+  await fetch(`/api/terminal/${id}/compact`, { method: 'POST' });
+}
+
+async function clearTerminal(id) {
+  await fetch(`/api/terminal/${id}/clear`, { method: 'POST' });
 }
 
 function elapsed(iso) {
@@ -345,68 +357,122 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
 }
 
-// ── Autocomplete ──
+// ── Directory Browser ──
 
 function initAutocomplete(input) {
   const dropdown = document.getElementById('autocomplete');
-  let selectedIdx = -1, items = [];
+  let selectedIdx = -1, items = [], currentDir = '';
 
-  const fetchSuggestions = debounce(async () => {
-    const val = input.value.trim();
-    if (val.length < 2) { hide(); return; }
+  async function browse(pathVal) {
+    const query = pathVal || input.value.trim() || '';
     try {
-      const res = await fetch(`/api/browse?path=${encodeURIComponent(val)}`);
+      const res = await fetch(`/api/browse?path=${encodeURIComponent(query)}`);
       const data = await res.json();
       items = data.suggestions || [];
-      if (!items.length) { hide(); return; }
+      currentDir = data.dir || '';
       selectedIdx = -1;
       render();
       dropdown.classList.remove('hidden');
     } catch { hide(); }
-  }, 150);
+  }
+
+  const browseLazy = debounce(() => browse(), 150);
 
   function render() {
-    dropdown.innerHTML = items.map((item, i) => `
-      <div class="ac-item ${i === selectedIdx ? 'selected' : ''}" data-index="${i}">
+    const parentPath = currentDir ? currentDir.replace(/[/\\][^/\\]*$/, '') : '';
+    let html = '';
+
+    // Parent directory link
+    if (currentDir && parentPath && parentPath !== currentDir) {
+      html += `<div class="ac-item ac-parent" data-action="parent" data-path="${parentPath}">
+        <span class="ac-icon">&#8617;</span>
+        <span class="ac-name">..</span>
+        <span class="ac-path">${parentPath}</span>
+      </div>`;
+    }
+
+    // Current directory — select this one
+    if (currentDir) {
+      html += `<div class="ac-item ac-current" data-action="select" data-path="${currentDir}">
+        <span class="ac-icon">&#10003;</span>
+        <span class="ac-name">Select this folder</span>
+        <span class="ac-path">${currentDir}</span>
+      </div>`;
+    }
+
+    // Subdirectories
+    html += items.map((item, i) => `
+      <div class="ac-item ${i === selectedIdx ? 'selected' : ''}" data-action="enter" data-index="${i}">
         <span class="ac-icon">\u{1F4C1}</span>
         <span class="ac-name">${item.name}</span>
         <span class="ac-path">${item.path}</span>
       </div>
     `).join('');
+
+    if (!items.length && currentDir) {
+      html += `<div class="ac-item ac-empty"><span class="ac-icon">&#8709;</span><span class="ac-name">No subdirectories</span></div>`;
+    }
+
+    dropdown.innerHTML = html;
   }
 
   function hide() { dropdown.classList.add('hidden'); items = []; selectedIdx = -1; }
 
-  function select(idx) {
+  function enterDir(idx) {
     if (idx >= 0 && idx < items.length) {
-      const sep = items[idx].path.includes('/') ? '/' : '\\';
-      input.value = items[idx].path + sep;
-      hide();
-      input.focus();
-      fetchSuggestions();
+      const dir = items[idx].path;
+      const sep = dir.includes('/') ? '/' : '\\';
+      input.value = dir + sep;
+      browse(dir);
     }
   }
 
-  input.addEventListener('input', fetchSuggestions);
+  function selectDir(path) {
+    input.value = path;
+    hide();
+    input.focus();
+  }
+
+  // Open on focus/click
+  input.addEventListener('focus', () => { if (!launched) browse(); });
+  input.addEventListener('click', () => { if (dropdown.classList.contains('hidden') && !launched) browse(); });
+  input.addEventListener('input', browseLazy);
+
   input.addEventListener('keydown', (e) => {
     if (dropdown.classList.contains('hidden')) {
       if (e.key === 'Enter') { launchSession(); return; }
+      if (e.key === 'ArrowDown') { browse(); return; }
       return;
     }
     if (e.key === 'ArrowDown') { e.preventDefault(); selectedIdx = Math.min(selectedIdx + 1, items.length - 1); render(); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); selectedIdx = Math.max(selectedIdx - 1, -1); render(); }
-    else if (e.key === 'Tab' || e.key === 'Enter') {
+    else if (e.key === 'Tab') {
       e.preventDefault();
-      select(selectedIdx >= 0 ? selectedIdx : (items.length > 0 ? 0 : -1));
-      if (selectedIdx < 0 && !items.length && e.key === 'Enter') { hide(); launchSession(); }
+      if (selectedIdx >= 0) enterDir(selectedIdx);
+      else if (items.length > 0) enterDir(0);
+    }
+    else if (e.key === 'Enter') {
+      e.preventDefault();
+      if (selectedIdx >= 0) enterDir(selectedIdx);
+      else { hide(); launchSession(); }
     }
     else if (e.key === 'Escape') { hide(); }
+    else if (e.key === 'Backspace' && input.value.endsWith('\\')) {
+      // Navigate up when deleting trailing backslash
+      e.preventDefault();
+      const parent = input.value.replace(/[/\\]$/, '').replace(/[/\\][^/\\]*$/, '');
+      if (parent) { input.value = parent; browse(parent); }
+    }
   });
 
   dropdown.addEventListener('mousedown', (e) => {
     e.preventDefault();
-    const item = e.target.closest('.ac-item');
-    if (item) select(parseInt(item.dataset.index, 10));
+    const el = e.target.closest('.ac-item');
+    if (!el) return;
+    const action = el.dataset.action;
+    if (action === 'parent') browse(el.dataset.path);
+    else if (action === 'select') selectDir(el.dataset.path);
+    else if (action === 'enter') enterDir(parseInt(el.dataset.index, 10));
   });
 
   document.addEventListener('click', (e) => { if (!e.target.closest('.launch-center')) hide(); });
