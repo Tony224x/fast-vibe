@@ -167,6 +167,8 @@ app.post('/api/launch', (req, res) => {
   const cwd = req.body.cwd || process.cwd();
   const workers = req.body.workers || settings.workers;
   settings.workers = workers;
+  settings.lastCwd = cwd;
+  saveSettings();
   ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL });
   res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });

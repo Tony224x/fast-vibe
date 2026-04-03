@@ -32,6 +32,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     noPilot = !!s.noPilot;
     trustMode = !!s.trustMode;
     useWSL = !!s.useWSL;
+    if (s.lastCwd) document.getElementById('cwd-input').value = s.lastCwd;
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
