@@ -244,21 +244,54 @@ h1, h2, h3, strong { font-family: 'Outfit', sans-serif; }
 .terminal-pane.pilot .pane-header { background: var(--bg-card); }
 .terminal-pane.pilot .pane-title { color: var(--primary); }
 
-#workers-grid {
+#workers-grid, .workers-flex {
   flex: 1;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 2px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
   min-height: 0;
 }
+
+.worker-row {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.worker-row .terminal-pane { min-width: 0; }
+
+.split-v {
+  width: 5px;
+  cursor: col-resize;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.split-h {
+  height: 5px;
+  cursor: row-resize;
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.split-v:hover, .split-v.dragging,
+.split-h:hover, .split-h.dragging {
+  background: var(--primary);
+}
+
+body.resizing .split-v { cursor: col-resize; }
+body.resizing .split-h { cursor: row-resize; }
 
 /* Expand */
 .terminal-pane.expanded { position: absolute; inset: 0; z-index: 20; border-radius: 0; }
 #terminals.has-expanded { position: relative; }
-#terminals.has-expanded > *:not(.expanded),
-#terminals.has-expanded #workers-grid:not(:has(.expanded)) { display: none; }
-#terminals.has-expanded #workers-grid:has(.expanded) { position: absolute; inset: 0; z-index: 20; }
-#terminals.has-expanded #workers-grid:has(.expanded) .terminal-pane:not(.expanded) { display: none; }
+#terminals.has-expanded > *:not(.expanded):not(:has(.expanded)) { display: none; }
+#terminals.has-expanded .workers-flex:has(.expanded) { position: absolute; inset: 0; z-index: 20; }
+#terminals.has-expanded .workers-flex:has(.expanded) .worker-row:not(:has(.expanded)) { display: none; }
+#terminals.has-expanded .workers-flex:has(.expanded) .worker-row:has(.expanded) { position: absolute; inset: 0; }
+#terminals.has-expanded .workers-flex:has(.expanded) .worker-row:has(.expanded) > *:not(.expanded) { display: none; }
+#terminals.has-expanded .workers-flex:has(.expanded) .split-h,
+#terminals.has-expanded .workers-flex:has(.expanded) .split-v { display: none; }
 
 /* ── Pane Header ── */
 

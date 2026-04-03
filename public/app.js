@@ -200,29 +200,42 @@ function destroyTerminals() {
 function buildWorkerPanes(count) {
   const grid = document.getElementById('workers-grid');
   grid.innerHTML = '';
-  // Adjust grid columns based on worker count
-  if (count <= 2) {
-    grid.style.gridTemplateColumns = '1fr '.repeat(count).trim();
-  } else {
-    grid.style.gridTemplateColumns = '1fr 1fr';
-  }
+  grid.style.gridTemplateColumns = '';
+  grid.className = 'workers-flex';
+
   const startIdx = noPilot ? 0 : 1;
-  for (let i = startIdx; i < startIdx + count; i++) {
-    const label = noPilot ? `Worker ${i + 1}` : `Worker ${i}`;
-    grid.insertAdjacentHTML('beforeend', `
-      <div class="terminal-pane worker" data-index="${i}">
-        <div class="pane-header">
-          <span class="pane-title">${label}</span>
-          <span class="pane-status">
-            <span class="status-dot"></span>
-            <span class="status-text">--</span>
-          </span>
-          <button class="btn-expand" data-index="${i}" title="Expand / Collapse">⛶</button>
+  const cols = count <= 2 ? count : 2;
+  const rows = Math.ceil(count / cols);
+
+  for (let r = 0; r < rows; r++) {
+    if (r > 0) grid.insertAdjacentHTML('beforeend', '<div class="split-h"></div>');
+    const row = document.createElement('div');
+    row.className = 'worker-row';
+    for (let c = 0; c < cols; c++) {
+      const idx = r * cols + c;
+      if (idx >= count) break;
+      if (c > 0) row.insertAdjacentHTML('beforeend', '<div class="split-v"></div>');
+      const i = startIdx + idx;
+      const label = noPilot ? `Worker ${i + 1}` : `Worker ${i}`;
+      row.insertAdjacentHTML('beforeend', `
+        <div class="terminal-pane worker" data-index="${i}" style="flex:1">
+          <div class="pane-header">
+            <span class="pane-title">${label}</span>
+            <span class="pane-status">
+              <span class="status-dot"></span>
+              <span class="status-text">--</span>
+            </span>
+            <button class="btn-expand" data-index="${i}" title="Expand / Collapse">⛶</button>
+          </div>
+          <div class="pane-body" id="term-${i}"></div>
         </div>
-        <div class="pane-body" id="term-${i}"></div>
-      </div>
-    `);
+      `);
+    }
+    grid.appendChild(row);
   }
+
+  // Attach splitter drag handlers
+  initSplitters(grid);
 }
 
 // ── Terminal ──
@@ -437,6 +450,77 @@ function elapsed(iso) {
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+// ── Splitter drag logic ──
+
+function initSplitters(container) {
+  container.querySelectorAll('.split-v').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const prev = handle.previousElementSibling;
+      const next = handle.nextElementSibling;
+      if (!prev || !next) return;
+      const row = handle.parentElement;
+      const startX = e.clientX;
+      const prevW = prev.offsetWidth;
+      const nextW = next.offsetWidth;
+      document.body.classList.add('resizing');
+      handle.classList.add('dragging');
+
+      function onMove(e) {
+        const dx = e.clientX - startX;
+        const newPrev = Math.max(80, prevW + dx);
+        const newNext = Math.max(80, nextW - dx);
+        const total = newPrev + newNext;
+        prev.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
+        next.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
+        fitAll();
+      }
+      function onUp() {
+        document.body.classList.remove('resizing');
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        fitAll();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+
+  container.querySelectorAll('.split-h').forEach(handle => {
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const prevRow = handle.previousElementSibling;
+      const nextRow = handle.nextElementSibling;
+      if (!prevRow || !nextRow) return;
+      const startY = e.clientY;
+      const prevH = prevRow.offsetHeight;
+      const nextH = nextRow.offsetHeight;
+      document.body.classList.add('resizing');
+      handle.classList.add('dragging');
+
+      function onMove(e) {
+        const dy = e.clientY - startY;
+        const newPrev = Math.max(60, prevH + dy);
+        const newNext = Math.max(60, nextH - dy);
+        const total = newPrev + newNext;
+        prevRow.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
+        nextRow.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
+        fitAll();
+      }
+      function onUp() {
+        document.body.classList.remove('resizing');
+        handle.classList.remove('dragging');
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        fitAll();
+      }
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
 }
 
 // ── Auto-focus on task completion ──
