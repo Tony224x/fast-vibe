@@ -284,6 +284,18 @@ h1, h2, h3, strong { font-family: 'Outfit', sans-serif; }
 .pane-body { flex: 1; overflow: hidden; min-height: 0; }
 .pane-body .xterm { height: 100%; padding: 2px; }
 
+.btn-expand {
+  background: none;
+  border: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  margin-left: auto;
+}
+
+.btn-expand:hover { color: var(--primary); }
+
 /* ── Preview Panel ── */
 
 #preview {

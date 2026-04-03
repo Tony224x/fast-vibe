@@ -78,6 +78,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Expand on button click (delegated)
+  document.getElementById('terminals').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-expand');
+    if (btn) {
+      toggleExpand(parseInt(btn.dataset.index, 10));
+    }
+  });
+
   // Zen mode
   document.getElementById('btn-zen').addEventListener('click', toggleZen);
   document.addEventListener('keydown', (e) => {
@@ -134,6 +142,7 @@ async function launchSession() {
               <span class="status-dot"></span>
               <span class="status-text">--</span>
             </span>
+            <button class="btn-expand" data-index="0" title="Expand / Collapse">⛶</button>
           </div>
           <div class="pane-body" id="term-0"></div>
         </div>`);
@@ -208,6 +217,7 @@ function buildWorkerPanes(count) {
             <span class="status-dot"></span>
             <span class="status-text">--</span>
           </span>
+          <button class="btn-expand" data-index="${i}" title="Expand / Collapse">⛶</button>
         </div>
         <div class="pane-body" id="term-${i}"></div>
       </div>
