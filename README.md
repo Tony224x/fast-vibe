@@ -18,11 +18,16 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding insta
 
 - **Multi-engine** — choose between Claude Code and Kiro CLI
 - **Safe by default** — runs without permission bypass; enable Trust Mode in settings to skip prompts
+- **WSL support** — launch CLI inside WSL from a Windows host (Run in WSL option)
 - **Pilot + Workers** — 1 orchestrator dispatches tasks to N workers via REST API (Agent tool disabled, forced curl)
 - **No-Pilot mode** — run N workers without an orchestrator (all terminals are independent workers)
 - **Configurable workers** — 1 to 8 parallel instances (Settings modal)
 - **Live preview** — iframe panel to see your app running alongside the terminals
+- **Directory bookmarks** — save favorite project paths, persisted across restarts
+- **Native folder picker** — OS file dialog to select project directory (WSL-aware)
 - **Directory browser** — click the input to browse folders, navigate with `..`, select with checkmark
+- **Zen mode** — `Ctrl+Shift+F` hides sidebar and launch bar for maximum terminal space
+- **Native app mode** — `npm run app` opens a Chrome/Edge window without browser chrome
 - **Context management** — compact/clear worker contexts via API or sidebar buttons
 - **Auto-launch** — all terminals auto-start the selected CLI engine
 
@@ -66,16 +71,16 @@ npm install
 ## Usage
 
 ```bash
-npm start
-# Open http://localhost:3333
+npm start        # Browser mode → http://localhost:3333
+npm run app      # Native window (Chrome/Edge, no browser chrome)
 ```
 
 ## API
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot, trustMode) |
-| `POST` | `/api/settings` | Update settings `{"workers": 4, "engine": "kiro", "noPilot": true, "trustMode": false}` |
+| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot, trustMode, useWSL) |
+| `POST` | `/api/settings` | Update settings `{"workers": 4, "engine": "kiro", "noPilot": true, "trustMode": false, "useWSL": true}` |
 | `POST` | `/api/launch` | Start terminals `{"cwd": "/path", "workers": 4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `POST` | `/api/terminal/:id/send` | Send text to terminal `{"text": "..."}` |
@@ -83,6 +88,10 @@ npm start
 | `POST` | `/api/terminal/:id/compact` | Compact worker context (keep summary) |
 | `POST` | `/api/terminal/:id/clear` | Clear worker context (full reset) |
 | `GET` | `/api/status` | Status of all terminals |
+| `GET` | `/api/bookmarks` | List saved directory bookmarks |
+| `POST` | `/api/bookmarks` | Add bookmark `{"path": "/my/project"}` |
+| `DELETE` | `/api/bookmarks` | Remove bookmark `{"path": "/my/project"}` |
+| `POST` | `/api/pick-folder` | Open native OS folder picker |
 | `GET` | `/api/browse?path=...` | Directory browser suggestions |
 
 ### Engine modes
