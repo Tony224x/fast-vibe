@@ -11,7 +11,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const ptyManager = new PtyManager();
 
 // In-memory settings
-let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false };
+let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false };
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -37,6 +37,9 @@ app.post('/api/settings', (req, res) => {
   }
   if (req.body.trustMode != null) {
     settings.trustMode = !!req.body.trustMode;
+  }
+  if (req.body.useWSL != null) {
+    settings.useWSL = !!req.body.useWSL;
   }
   res.json(settings);
 });
@@ -151,7 +154,7 @@ app.post('/api/launch', (req, res) => {
   const cwd = req.body.cwd || process.cwd();
   const workers = req.body.workers || settings.workers;
   settings.workers = workers;
-  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL });
   res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });
 

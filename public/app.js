@@ -3,6 +3,7 @@ let previewUrl = '';
 let engine = 'claude';
 let noPilot = false;
 let trustMode = false;
+let useWSL = false;
 const terminals = [];
 let expandedIndex = -1;
 let focusedIndex = 0;
@@ -30,6 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     engine = s.engine || 'claude';
     noPilot = !!s.noPilot;
     trustMode = !!s.trustMode;
+    useWSL = !!s.useWSL;
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
@@ -332,6 +334,7 @@ function openSettings() {
   document.getElementById('setting-engine').value = engine;
   document.getElementById('setting-no-pilot').checked = noPilot;
   document.getElementById('setting-trust-mode').checked = trustMode;
+  document.getElementById('setting-use-wsl').checked = useWSL;
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -345,11 +348,12 @@ async function saveSettings() {
   engine = document.getElementById('setting-engine').value;
   noPilot = document.getElementById('setting-no-pilot').checked;
   trustMode = document.getElementById('setting-trust-mode').checked;
+  useWSL = document.getElementById('setting-use-wsl').checked;
 
   await fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode }),
+    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode, useWSL }),
   });
 
   closeSettings();
