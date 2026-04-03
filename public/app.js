@@ -4,6 +4,7 @@ let engine = 'claude';
 let noPilot = false;
 let trustMode = false;
 let useWSL = false;
+let autoFocus = true;
 const terminals = [];
 let expandedIndex = -1;
 let focusedIndex = 0;
@@ -241,7 +242,11 @@ function connectWebSocket(index, term) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${location.host}/ws?terminal=${index}`);
 
-  ws.onmessage = (e) => term.write(typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data));
+  ws.onmessage = (e) => {
+    const data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data);
+    term.write(data);
+    if (autoFocus && index !== focusedIndex) detectTaskDone(index, data);
+  };
   ws.onopen = () => {
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     updatePaneDot(index, true);
@@ -416,6 +421,41 @@ function elapsed(iso) {
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+// ── Auto-focus on task completion ──
+
+const DONE_PATTERNS = [
+  /❯\s*$/,              // Claude prompt
+  /kiro>\s*$/i,         // Kiro prompt
+  /\$\s*$/,             // bash prompt
+];
+
+const termActivity = {};
+
+function detectTaskDone(index, data) {
+  if (!termActivity[index]) termActivity[index] = { timer: null, chunks: 0 };
+  const act = termActivity[index];
+  act.chunks++;
+  clearTimeout(act.timer);
+
+  // After 1.5s of silence, check if last data looks like a prompt
+  act.timer = setTimeout(() => {
+    if (act.chunks < 5) { act.chunks = 0; return; } // ignore short bursts (startup etc)
+    const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+    act.chunks = 0;
+    for (const pat of DONE_PATTERNS) {
+      if (pat.test(clean)) {
+        setFocused(index);
+        const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
+        if (pane) {
+          pane.style.borderColor = 'var(--green)';
+          setTimeout(() => { pane.style.borderColor = ''; }, 1500);
+        }
+        return;
+      }
+    }
+  }, 1500);
 }
 
 // ── Resize Handle ──
