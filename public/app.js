@@ -418,6 +418,46 @@ function elapsed(iso) {
   return `${h}h ${m % 60}m`;
 }
 
+// ── Resize Handle ──
+
+(function initResize() {
+  const handle = document.getElementById('resize-handle');
+  if (!handle) return;
+
+  let startY, startPilotH, container;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const pilot = document.querySelector('.terminal-pane.pilot');
+    if (!pilot || pilot.classList.contains('hidden')) return;
+    container = document.getElementById('terminals');
+    startY = e.clientY;
+    startPilotH = pilot.offsetHeight;
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing');
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+
+  function onMove(e) {
+    const pilot = document.querySelector('.terminal-pane.pilot');
+    if (!pilot) return;
+    const totalH = container.offsetHeight;
+    const newH = Math.max(60, Math.min(totalH - 60, startPilotH + (e.clientY - startY)));
+    const pct = (newH / totalH * 100).toFixed(1);
+    pilot.style.flex = `0 0 ${pct}%`;
+    fitAll();
+  }
+
+  function onUp() {
+    handle.classList.remove('dragging');
+    document.body.classList.remove('resizing');
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    fitAll();
+  }
+})();
+
 // ── Bookmarks ──
 
 let bookmarks = [];

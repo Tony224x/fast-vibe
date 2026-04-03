@@ -594,3 +594,22 @@ h1, h2, h3, strong { font-family: 'Outfit', sans-serif; }
 .bm-del:hover { color: var(--red); background: rgba(248, 81, 73, 0.15); }
 
 .bm-empty { color: var(--fg-muted); padding: 12px; text-align: center; font-size: 12px; }
+
+/* ── Resize Handle ── */
+
+.resize-handle {
+  height: 5px;
+  cursor: row-resize;
+  background: transparent;
+  flex-shrink: 0;
+  position: relative;
+  z-index: 10;
+}
+
+.resize-handle:hover, .resize-handle.dragging {
+  background: var(--primary);
+  opacity: 0.6;
+}
+
+body.resizing { cursor: row-resize !important; user-select: none; }
+body.resizing iframe { pointer-events: none; }
