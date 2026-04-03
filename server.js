@@ -10,8 +10,20 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const ptyManager = new PtyManager();
 
-// In-memory settings
-let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false };
+// Persisted settings
+const SETTINGS_FILE = path.join(__dirname, '.settings.json');
+const DEFAULTS = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false };
+
+function loadSettings() {
+  try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; }
+  catch { return { ...DEFAULTS }; }
+}
+
+function saveSettings() {
+  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+}
+
+let settings = loadSettings();
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -41,6 +53,7 @@ app.post('/api/settings', (req, res) => {
   if (req.body.useWSL != null) {
     settings.useWSL = !!req.body.useWSL;
   }
+  saveSettings();
   res.json(settings);
 });
 
