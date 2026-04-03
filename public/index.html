@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>fast-vibe</title>
   <link rel="icon" href="/favicon.ico" sizes="256x256" type="image/x-icon">
-  <link rel="icon" href="/kalira-logo.svg" sizes="any" type="image/svg+xml">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=General+Sans:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
   <link rel="stylesheet" href="/style.css">
@@ -16,10 +15,15 @@
       <!-- Launch Bar -->
       <div id="launch-bar">
         <div class="launch-left">
-          <img src="/kalira-logo.svg" alt="Kalira" class="launch-logo-img">
           <span class="launch-logo">fast-vibe</span>
         </div>
         <div class="launch-center">
+          <button id="btn-bookmark" title="Save bookmark">&#9734;</button>
+          <div class="bookmark-wrapper">
+            <button id="btn-bookmarks" title="Bookmarks">&#9776;</button>
+            <div id="bookmarks-dropdown" class="hidden"></div>
+          </div>
+          <button id="btn-browse" title="Browse folders">&#128193;</button>
           <input type="text" id="cwd-input" placeholder="Project directory..." spellcheck="false" autocomplete="off">
           <div id="autocomplete" class="hidden"></div>
           <button id="btn-start">Start</button>
@@ -52,7 +56,7 @@
       <div id="welcome" class="grid-bg">
         <div class="welcome-content">
           <h1>fast-vibe</h1>
-          <p>1 Pilot + N Workers &mdash; Claude Code in parallel</p>
+          <p>1 Pilot + N Workers &mdash; Claude Code &amp; Kiro CLI in parallel</p>
           <p class="welcome-hint">Enter a project directory above and click <strong>Start</strong></p>
         </div>
       </div>
@@ -86,7 +90,20 @@
       <div class="setting-row">
         <label for="setting-workers">Workers</label>
         <input type="number" id="setting-workers" min="1" max="8" value="4">
-        <span class="setting-hint">1-8 parallel Claude Code instances</span>
+        <span class="setting-hint">1-8 parallel instances</span>
+      </div>
+      <div class="setting-row">
+        <label for="setting-engine">Engine</label>
+        <select id="setting-engine">
+          <option value="claude">Claude Code</option>
+          <option value="kiro">Kiro CLI</option>
+        </select>
+        <span class="setting-hint">CLI engine for all terminals</span>
+      </div>
+      <div class="setting-row">
+        <label for="setting-no-pilot">No Pilot</label>
+        <input type="checkbox" id="setting-no-pilot">
+        <span class="setting-hint">Workers only, no orchestrator</span>
       </div>
       <div class="setting-row">
         <label for="setting-preview-url">Preview URL</label>
@@ -99,6 +116,9 @@
       </div>
     </div>
   </div>
+
+  <!-- Zen mode toggle -->
+  <button id="btn-zen" title="Zen mode (Ctrl+Shift+F)">⛶</button>
 
   <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>

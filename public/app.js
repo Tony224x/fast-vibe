@@ -1,5 +1,7 @@
 let workerCount = 4;
 let previewUrl = '';
+let engine = 'claude';
+let noPilot = false;
 const terminals = [];
 let expandedIndex = -1;
 let focusedIndex = 0;
@@ -24,6 +26,8 @@ document.addEventListener('DOMContentLoaded', async () => {
     const s = await res.json();
     workerCount = s.workers || 4;
     previewUrl = s.previewUrl || '';
+    engine = s.engine || 'claude';
+    noPilot = !!s.noPilot;
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
@@ -34,6 +38,17 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('settings-overlay').addEventListener('click', (e) => {
     if (e.target === e.currentTarget) closeSettings();
   });
+
+  // Bookmarks & browse
+  document.getElementById('btn-bookmark').addEventListener('click', addBookmark);
+  document.getElementById('btn-bookmarks').addEventListener('click', toggleBookmarks);
+  document.getElementById('btn-browse').addEventListener('click', pickFolder);
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('.bookmark-wrapper')) {
+      document.getElementById('bookmarks-dropdown').classList.add('hidden');
+    }
+  });
+  loadBookmarksUI();
 
   // Preview controls
   document.getElementById('btn-preview-toggle').addEventListener('click', () => togglePreview());
@@ -54,6 +69,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       const index = parseInt(header.parentElement.dataset.index, 10);
       toggleExpand(index);
     }
+  });
+
+  // Zen mode
+  document.getElementById('btn-zen').addEventListener('click', toggleZen);
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey && e.shiftKey && e.key === 'F') { e.preventDefault(); toggleZen(); }
   });
 
   setInterval(pollStatus, 2000);
@@ -86,20 +107,43 @@ async function launchSession() {
   // Build worker panes dynamically
   buildWorkerPanes(workerCount);
 
+  // Hide/show pilot pane based on noPilot mode
+  const pilotPane = document.querySelector('.terminal-pane.pilot');
+  if (noPilot) {
+    if (pilotPane) pilotPane.remove();
+  } else {
+    // Re-add pilot pane if it was removed in a previous noPilot session
+    const terminalsEl = document.getElementById('terminals');
+    const grid = document.getElementById('workers-grid');
+    if (!document.querySelector('.terminal-pane.pilot')) {
+      grid.insertAdjacentHTML('beforebegin', `
+        <div class="terminal-pane pilot" data-index="0">
+          <div class="pane-header">
+            <span class="pane-title">Pilot</span>
+            <span class="pane-status">
+              <span class="status-dot"></span>
+              <span class="status-text">--</span>
+            </span>
+          </div>
+          <div class="pane-body" id="term-0"></div>
+        </div>`);
+    }
+  }
+
   document.getElementById('welcome').classList.add('hidden');
   document.getElementById('terminals').classList.remove('hidden');
   document.getElementById('btn-start').classList.add('hidden');
   document.getElementById('btn-stop').classList.remove('hidden');
-  document.getElementById('session-info').textContent = cwd;
+  document.getElementById('session-info').textContent = `${cwd} (${engine}${noPilot ? ', no pilot' : ''})`;
 
   launched = true;
-  const totalTerminals = 1 + workerCount;
+  const totalTerminals = noPilot ? workerCount : 1 + workerCount;
 
   for (let i = 0; i < totalTerminals; i++) {
     createTerminal(i);
   }
 
-  setFocused(0);
+  setFocused(noPilot ? 0 : 0);
   setTimeout(fitAll, 100);
 
   // Auto-open preview if URL is set
@@ -143,11 +187,13 @@ function buildWorkerPanes(count) {
   } else {
     grid.style.gridTemplateColumns = '1fr 1fr';
   }
-  for (let i = 1; i <= count; i++) {
+  const startIdx = noPilot ? 0 : 1;
+  for (let i = startIdx; i < startIdx + count; i++) {
+    const label = noPilot ? `Worker ${i + 1}` : `Worker ${i}`;
     grid.insertAdjacentHTML('beforeend', `
       <div class="terminal-pane worker" data-index="${i}">
         <div class="pane-header">
-          <span class="pane-title">Worker ${i}</span>
+          <span class="pane-title">${label}</span>
           <span class="pane-status">
             <span class="status-dot"></span>
             <span class="status-text">--</span>
@@ -257,6 +303,13 @@ function togglePreview(show) {
   setTimeout(fitAll, 50);
 }
 
+function toggleZen() {
+  const app = document.getElementById('app');
+  app.classList.toggle('sidebar-hidden');
+  app.classList.toggle('launchbar-hidden');
+  setTimeout(fitAll, 50);
+}
+
 function loadPreview() {
   const url = document.getElementById('preview-url').value.trim();
   if (url) {
@@ -274,6 +327,8 @@ function refreshPreview() {
 function openSettings() {
   document.getElementById('setting-workers').value = workerCount;
   document.getElementById('setting-preview-url').value = previewUrl;
+  document.getElementById('setting-engine').value = engine;
+  document.getElementById('setting-no-pilot').checked = noPilot;
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -284,11 +339,13 @@ function closeSettings() {
 async function saveSettings() {
   workerCount = Math.max(1, Math.min(8, parseInt(document.getElementById('setting-workers').value, 10) || 4));
   previewUrl = document.getElementById('setting-preview-url').value.trim();
+  engine = document.getElementById('setting-engine').value;
+  noPilot = document.getElementById('setting-no-pilot').checked;
 
   await fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workers: workerCount, previewUrl }),
+    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot }),
   });
 
   closeSettings();
@@ -313,12 +370,14 @@ function updatePaneDot(index, alive) {
 }
 
 function updateSidebar(statuses) {
-  document.getElementById('status-list').innerHTML = statuses.map((s, i) => `
+  document.getElementById('status-list').innerHTML = statuses.map((s, i) => {
+    const label = s.role === 'pilot' ? 'Pilot' : (noPilot ? `Worker ${i + 1}` : `Worker ${i}`);
+    return `
     <div class="status-card ${i === focusedIndex ? 'active' : ''} ${s.role === 'pilot' ? 'pilot-card' : ''}"
          data-index="${i}" onclick="setFocused(${i})">
       <div class="status-card-header">
         <span class="status-dot ${s.alive ? 'alive' : 'dead'}"></span>
-        <strong>${s.role === 'pilot' ? 'Pilot' : 'Worker ' + i}</strong>
+        <strong>${label}</strong>
       </div>
       <div class="status-card-info">
         PID: ${s.pid || '-'} &middot; ${s.alive ? elapsed(s.startedAt) : 'stopped'}
@@ -327,8 +386,8 @@ function updateSidebar(statuses) {
         <button class="btn-ctx" onclick="event.stopPropagation();compactTerminal(${i})" title="Compact context">&#8860; compact</button>
         <button class="btn-ctx btn-ctx-danger" onclick="event.stopPropagation();clearTerminal(${i})" title="Clear context">&#8855; clear</button>
       </div>` : ''}
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 }
 
 async function compactTerminal(id) {
@@ -348,6 +407,89 @@ function elapsed(iso) {
   if (m < 60) return `${m}m ${s}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+// ── Bookmarks ──
+
+let bookmarks = [];
+
+async function loadBookmarksUI() {
+  try {
+    const res = await fetch('/api/bookmarks');
+    bookmarks = await res.json();
+  } catch { bookmarks = []; }
+  updateBookmarkStar();
+}
+
+function updateBookmarkStar() {
+  const p = document.getElementById('cwd-input').value.trim();
+  const btn = document.getElementById('btn-bookmark');
+  const saved = bookmarks.some(b => b.path === p);
+  btn.innerHTML = saved ? '&#9733;' : '&#9734;';
+  btn.classList.toggle('saved', saved);
+}
+
+async function addBookmark() {
+  const p = document.getElementById('cwd-input').value.trim();
+  if (!p) return;
+  const exists = bookmarks.some(b => b.path === p);
+  if (exists) {
+    await fetch('/api/bookmarks', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+  } else {
+    await fetch('/api/bookmarks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+  }
+  await loadBookmarksUI();
+}
+
+function toggleBookmarks() {
+  const dd = document.getElementById('bookmarks-dropdown');
+  dd.classList.toggle('hidden');
+  if (!dd.classList.contains('hidden')) renderBookmarks();
+}
+
+function renderBookmarks() {
+  const dd = document.getElementById('bookmarks-dropdown');
+  if (!bookmarks.length) {
+    dd.innerHTML = '<div class="bm-empty">No bookmarks yet</div>';
+    return;
+  }
+  dd.innerHTML = bookmarks.map(b => `
+    <div class="bm-item" data-path="${b.path}">
+      <span class="bm-name">${b.name}</span>
+      <span class="bm-path">${b.path}</span>
+      <button class="bm-del" data-del="${b.path}" title="Remove">&#10005;</button>
+    </div>`).join('');
+
+  dd.querySelectorAll('.bm-item').forEach(el => {
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('.bm-del')) return;
+      document.getElementById('cwd-input').value = el.dataset.path;
+      dd.classList.add('hidden');
+      updateBookmarkStar();
+    });
+  });
+  dd.querySelectorAll('.bm-del').forEach(el => {
+    el.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      await fetch('/api/bookmarks', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: el.dataset.del }) });
+      await loadBookmarksUI();
+      renderBookmarks();
+    });
+  });
+}
+
+async function pickFolder() {
+  const btn = document.getElementById('btn-browse');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/pick-folder', { method: 'POST' });
+    const data = await res.json();
+    if (data.folder) {
+      document.getElementById('cwd-input').value = data.folder;
+      updateBookmarkStar();
+    }
+  } catch {}
+  btn.disabled = false;
 }
 
 // ── Utils ──
@@ -436,7 +578,7 @@ function initAutocomplete(input) {
   // Open on focus/click
   input.addEventListener('focus', () => { if (!launched) browse(); });
   input.addEventListener('click', () => { if (dropdown.classList.contains('hidden') && !launched) browse(); });
-  input.addEventListener('input', browseLazy);
+  input.addEventListener('input', () => { browseLazy(); updateBookmarkStar(); });
 
   input.addEventListener('keydown', (e) => {
     if (dropdown.classList.contains('hidden')) {

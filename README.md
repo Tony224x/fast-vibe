@@ -1,12 +1,12 @@
 # fast-vibe
 
-Web-based terminal multiplexer that runs **1 pilot + N workers** Claude Code instances in parallel, with a control API, live preview, and context management.
+Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding instances in parallel, with a control API, live preview, and context management. Supports **Claude Code** and **Kiro CLI** engines.
 
 ```
 ┌────────────────────────────┬──────────────┬──────────┐
 │  [📁 /path/to/project] [⚙]│  Preview URL │          │
 ├────────────────────────────┼──────────────┤  Status  │
-│      PILOT (Claude Code)   │              │  Panel   │
+│      PILOT (Claude/Kiro)   │              │  Panel   │
 ├─────────┬──────────────────┤    iframe     │ compact  │
 │Worker 1 │ Worker 2         │    preview    │ clear    │
 ├─────────┼──────────────────┤              │          │
@@ -16,20 +16,21 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** Claude Code ins
 
 ## Features
 
+- **Multi-engine** — choose between Claude Code (`claude --dangerously-skip-permissions`) and Kiro CLI (`kiro-cli chat --trust-all-tools --tui`)
 - **Pilot + Workers** — 1 orchestrator dispatches tasks to N workers via REST API (Agent tool disabled, forced curl)
+- **No-Pilot mode** — run N workers without an orchestrator (all terminals are independent workers)
 - **Configurable workers** — 1 to 8 parallel instances (Settings modal)
 - **Live preview** — iframe panel to see your app running alongside the terminals
 - **Directory browser** — click the input to browse folders, navigate with `..`, select with checkmark
 - **Context management** — compact/clear worker contexts via API or sidebar buttons
-- **Auto-launch** — all terminals start `claude --dangerously-skip-permissions` with alias `c`
-- **Kalira branding** — Outfit + General Sans fonts, orange theme, hexagonal grid background
+- **Auto-launch** — all terminals auto-start the selected CLI engine
 
 ## How it works
 
 1. Open `http://localhost:3333`, click the directory input to browse folders
-2. Configure worker count and preview URL in **Settings** (⚙)
-3. Click **Start** — spawns 1 pilot + N workers, each running Claude Code
-4. The **pilot** controls workers via `curl` (Agent tool is disabled):
+2. Configure engine (Claude/Kiro), worker count, no-pilot mode, and preview URL in **Settings** (⚙)
+3. Click **Start** — spawns terminals with the selected engine
+4. In pilot mode, the **pilot** controls workers via `curl` (Agent tool is disabled):
 
 ```bash
 # Send a task to worker 2
@@ -55,7 +56,10 @@ cd fast-vibe
 npm install
 ```
 
-> Requires Node.js 18+ and [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed.
+> Requires Node.js 18+ and one of:
+> - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
+> - [Kiro CLI](https://kiro.dev) (`kiro-cli`)
+>
 > On Windows, `node-pty` needs Visual Studio Build Tools.
 
 ## Usage
@@ -69,8 +73,8 @@ npm start
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/settings` | Get settings (workers, previewUrl) |
-| `POST` | `/api/settings` | Update settings `{"workers": 4, "previewUrl": "..."}` |
+| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot) |
+| `POST` | `/api/settings` | Update settings `{"workers": 4, "previewUrl": "...", "engine": "kiro", "noPilot": true}` |
 | `POST` | `/api/launch` | Start terminals `{"cwd": "/path", "workers": 4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `POST` | `/api/terminal/:id/send` | Send text to terminal `{"text": "..."}` |
@@ -79,6 +83,13 @@ npm start
 | `POST` | `/api/terminal/:id/clear` | Clear worker context (full reset) |
 | `GET` | `/api/status` | Status of all terminals |
 | `GET` | `/api/browse?path=...` | Directory browser suggestions |
+
+### Engine modes
+
+| Engine | CLI command | Pilot support |
+|--------|------------|---------------|
+| `claude` | `claude --dangerously-skip-permissions` | ✅ with system prompt |
+| `kiro` | `kiro-cli chat --trust-all-tools --tui` | ❌ (use no-pilot mode) |
 
 ## Stack
 

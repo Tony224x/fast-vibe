@@ -11,7 +11,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const ptyManager = new PtyManager();
 
 // In-memory settings
-let settings = { workers: 4, previewUrl: '' };
+let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false };
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -29,6 +29,12 @@ app.post('/api/settings', (req, res) => {
   if (req.body.previewUrl != null) {
     settings.previewUrl = req.body.previewUrl;
   }
+  if (req.body.engine != null && ['claude', 'kiro'].includes(req.body.engine)) {
+    settings.engine = req.body.engine;
+  }
+  if (req.body.noPilot != null) {
+    settings.noPilot = !!req.body.noPilot;
+  }
   res.json(settings);
 });
 
@@ -36,6 +42,67 @@ app.post('/api/settings', (req, res) => {
 
 app.get('/api/status', (req, res) => {
   res.json({ terminals: ptyManager.getStatus() });
+});
+
+// ── Bookmarks API ──
+
+const BOOKMARKS_FILE = path.join(__dirname, '.bookmarks.json');
+
+function loadBookmarks() {
+  try { return JSON.parse(fs.readFileSync(BOOKMARKS_FILE, 'utf8')); }
+  catch { return []; }
+}
+
+function saveBookmarks(list) {
+  fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(list, null, 2));
+}
+
+app.get('/api/bookmarks', (req, res) => {
+  res.json(loadBookmarks());
+});
+
+app.post('/api/bookmarks', (req, res) => {
+  const { path: p, name } = req.body;
+  if (!p) return res.status(400).json({ error: 'Missing path' });
+  const list = loadBookmarks();
+  if (!list.find(b => b.path === p)) {
+    list.push({ path: p, name: name || path.basename(p) });
+    saveBookmarks(list);
+  }
+  res.json(list);
+});
+
+app.delete('/api/bookmarks', (req, res) => {
+  const { path: p } = req.body;
+  const list = loadBookmarks().filter(b => b.path !== p);
+  saveBookmarks(list);
+  res.json(list);
+});
+
+// ── Native folder picker ──
+
+app.post('/api/pick-folder', (req, res) => {
+  const { exec } = require('child_process');
+  const isWSL = process.platform === 'linux' && fs.existsSync('/proc/version') && fs.readFileSync('/proc/version', 'utf8').toLowerCase().includes('microsoft');
+  const isWin = process.platform === 'win32' || isWSL;
+
+  const psCmd = `${isWSL ? 'powershell.exe' : 'powershell'} -NoProfile -Command "Add-Type -AssemblyName System.Windows.Forms; $f = New-Object System.Windows.Forms.FolderBrowserDialog; $f.ShowDialog() | Out-Null; $f.SelectedPath"`;
+
+  const cmd = isWin
+    ? psCmd
+    : (process.platform === 'darwin'
+      ? `osascript -e 'POSIX path of (choose folder)'`
+      : `zenity --file-selection --directory 2>/dev/null || kdialog --getexistingdirectory ~ 2>/dev/null`);
+
+  exec(cmd, { timeout: 60000 }, (err, stdout) => {
+    let folder = (stdout || '').trim();
+    if (err || !folder) return res.json({ folder: null });
+    // Convert Windows path to WSL path if needed
+    if (isWSL && /^[A-Z]:\\/.test(folder)) {
+      folder = '/mnt/' + folder[0].toLowerCase() + folder.slice(2).replace(/\\/g, '/');
+    }
+    res.json({ folder });
+  });
 });
 
 // ── Directory autocomplete ──
@@ -81,8 +148,8 @@ app.post('/api/launch', (req, res) => {
   const cwd = req.body.cwd || process.cwd();
   const workers = req.body.workers || settings.workers;
   settings.workers = workers;
-  ptyManager.launchAll(cwd, workers);
-  res.json({ ok: true, cwd, workers });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot });
+  res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });
 
 app.post('/api/stop', (req, res) => {
