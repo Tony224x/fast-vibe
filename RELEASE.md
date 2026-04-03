@@ -1,38 +1,27 @@
-# v1.1.0
+# v1.2.0 — "Stay in the Flow"
 
-## 🔒 Safe by default
+> Persistent settings, auto-focus, resizable panes.
 
-Les CLI se lancent désormais **sans bypass de permissions** par défaut.
+## ✨ Auto-focus on task completion
 
-| Engine | Mode safe (défaut) | Mode trust |
-|--------|--------------------|------------|
-| Claude | `claude` | `claude --dangerously-skip-permissions` |
-| Kiro | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` |
+Quand un terminal finit sa tâche (prompt CLI détecté après 1.5s de silence), le focus bascule automatiquement dessus avec un flash vert. Plus besoin de cliquer pour enchaîner.
 
-Activer **Trust Mode** dans les settings (⚙) pour retrouver le comportement précédent.
+- Détecte les prompts Claude (`❯`), Kiro, et bash (`$`)
+- Ignore les petits bursts (démarrage, outputs courts)
+- Configurable dans les settings (activé par défaut)
 
-## 🐧 Support WSL
+## ↕️ Panes redimensionnables
 
-Nouvelle option **Run in WSL** dans les settings : les terminaux sont lancés dans WSL (`wsl.exe --cd <path>`) au lieu du shell Windows. Utile quand les CLI sont installées côté Linux.
+Barre de resize draggable entre le pilot et les workers. Glisser pour ajuster la répartition de l'espace. Les terminaux se re-fit automatiquement.
 
-## 📁 Favoris & explorateur natif
+## 💾 Persistence complète
 
-- **☆ Bookmarks** — sauvegarder des dossiers en favoris, persistés dans `.bookmarks.json`
-- **☰ Liste** — sélectionner rapidement un favori
-- **📁 Folder picker** — ouvre l'explorateur de fichiers natif de l'OS (WSL-aware : PowerShell + conversion automatique des chemins)
+Tous les paramètres sont maintenant sauvegardés entre les redémarrages :
 
-## 🧘 Zen mode
-
-`Ctrl+Shift+F` masque la sidebar et la barre de lancement. Les terminaux occupent 100% de l'espace. Bouton `⛶` en bas à droite pour toggle.
-
-## 🖥️ Native app mode
-
-```bash
-npm run app
-```
-
-Ouvre une fenêtre Chrome/Edge en mode application (sans barre d'URL, sans onglets). Zéro dépendance supplémentaire.
+- Settings → `.settings.json`
+- Bookmarks → `.bookmarks.json`
+- Dernier chemin projet → pré-rempli au prochain lancement
 
 ## 🐛 Bugfix
 
-- Fix du conflit d'ID DOM en mode noPilot : le pane pilote est retiré du DOM au lieu d'être caché, évitant que le terminal xterm s'ouvre dans un conteneur invisible.
+- **WSL auto-launch** — la commande CLI attendait que le shell WSL soit prêt (détection de prompt) au lieu d'un timeout fixe de 500ms qui arrivait trop tôt.

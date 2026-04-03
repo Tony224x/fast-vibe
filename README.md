@@ -28,6 +28,9 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding insta
 - **Directory browser** — click the input to browse folders, navigate with `..`, select with checkmark
 - **Zen mode** — `Ctrl+Shift+F` hides sidebar and launch bar for maximum terminal space
 - **Native app mode** — `npm run app` opens a Chrome/Edge window without browser chrome
+- **Auto-focus** — automatically switches to the terminal that just finished its task (configurable)
+- **Resizable panes** — drag the separator between pilot and workers to adjust space
+- **Persistent settings** — all settings and last project path saved across restarts
 - **Context management** — compact/clear worker contexts via API or sidebar buttons
 - **Auto-launch** — all terminals auto-start the selected CLI engine
 
@@ -79,7 +82,7 @@ npm run app      # Native window (Chrome/Edge, no browser chrome)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot, trustMode, useWSL) |
+| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus) |
 | `POST` | `/api/settings` | Update settings `{"workers": 4, "engine": "kiro", "noPilot": true, "trustMode": false, "useWSL": true}` |
 | `POST` | `/api/launch` | Start terminals `{"cwd": "/path", "workers": 4}` |
 | `POST` | `/api/stop` | Stop all terminals |
