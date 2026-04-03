@@ -2,6 +2,7 @@ let workerCount = 4;
 let previewUrl = '';
 let engine = 'claude';
 let noPilot = false;
+let trustMode = false;
 const terminals = [];
 let expandedIndex = -1;
 let focusedIndex = 0;
@@ -28,6 +29,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     previewUrl = s.previewUrl || '';
     engine = s.engine || 'claude';
     noPilot = !!s.noPilot;
+    trustMode = !!s.trustMode;
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
@@ -134,7 +136,7 @@ async function launchSession() {
   document.getElementById('terminals').classList.remove('hidden');
   document.getElementById('btn-start').classList.add('hidden');
   document.getElementById('btn-stop').classList.remove('hidden');
-  document.getElementById('session-info').textContent = `${cwd} (${engine}${noPilot ? ', no pilot' : ''})`;
+  document.getElementById('session-info').textContent = `${cwd} (${engine}${noPilot ? ', no pilot' : ''}${trustMode ? ', trust' : ', safe'})`;
 
   launched = true;
   const totalTerminals = noPilot ? workerCount : 1 + workerCount;
@@ -329,6 +331,7 @@ function openSettings() {
   document.getElementById('setting-preview-url').value = previewUrl;
   document.getElementById('setting-engine').value = engine;
   document.getElementById('setting-no-pilot').checked = noPilot;
+  document.getElementById('setting-trust-mode').checked = trustMode;
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -341,11 +344,12 @@ async function saveSettings() {
   previewUrl = document.getElementById('setting-preview-url').value.trim();
   engine = document.getElementById('setting-engine').value;
   noPilot = document.getElementById('setting-no-pilot').checked;
+  trustMode = document.getElementById('setting-trust-mode').checked;
 
   await fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot }),
+    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode }),
   });
 
   closeSettings();

@@ -16,7 +16,8 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding insta
 
 ## Features
 
-- **Multi-engine** — choose between Claude Code (`claude --dangerously-skip-permissions`) and Kiro CLI (`kiro-cli chat --trust-all-tools --tui`)
+- **Multi-engine** — choose between Claude Code and Kiro CLI
+- **Safe by default** — runs without permission bypass; enable Trust Mode in settings to skip prompts
 - **Pilot + Workers** — 1 orchestrator dispatches tasks to N workers via REST API (Agent tool disabled, forced curl)
 - **No-Pilot mode** — run N workers without an orchestrator (all terminals are independent workers)
 - **Configurable workers** — 1 to 8 parallel instances (Settings modal)
@@ -73,8 +74,8 @@ npm start
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot) |
-| `POST` | `/api/settings` | Update settings `{"workers": 4, "previewUrl": "...", "engine": "kiro", "noPilot": true}` |
+| `GET` | `/api/settings` | Get settings (workers, previewUrl, engine, noPilot, trustMode) |
+| `POST` | `/api/settings` | Update settings `{"workers": 4, "engine": "kiro", "noPilot": true, "trustMode": false}` |
 | `POST` | `/api/launch` | Start terminals `{"cwd": "/path", "workers": 4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `POST` | `/api/terminal/:id/send` | Send text to terminal `{"text": "..."}` |
@@ -86,10 +87,10 @@ npm start
 
 ### Engine modes
 
-| Engine | CLI command | Pilot support |
-|--------|------------|---------------|
-| `claude` | `claude --dangerously-skip-permissions` | ✅ with system prompt |
-| `kiro` | `kiro-cli chat --trust-all-tools --tui` | ❌ (use no-pilot mode) |
+| Engine | Safe mode (default) | Trust mode | Pilot support |
+|--------|---------------------|------------|---------------|
+| `claude` | `claude` | `claude --dangerously-skip-permissions` | ✅ with system prompt |
+| `kiro` | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` | ❌ (use no-pilot mode) |
 
 ## Stack
 

@@ -42,14 +42,15 @@ npm run app      # Mode fenêtre native (sans barre d'URL)
 | Workers | Nombre d'instances parallèles (1-8) |
 | Engine | `Claude Code` ou `Kiro CLI` |
 | No Pilot | Coché = pas d'orchestrateur, tous les terminaux sont des workers indépendants |
+| Trust Mode | Coché = bypass des permissions. Décoché (défaut) = mode safe, les CLI demandent confirmation |
 | Preview URL | URL à charger dans le panneau de prévisualisation |
 
 ## Engines
 
-| Engine | Commande lancée | Mode pilote |
-|--------|-----------------|-------------|
-| Claude Code | `claude --dangerously-skip-permissions` | ✅ Le pilote orchestre les workers via curl |
-| Kiro CLI | `kiro-cli chat --trust-all-tools --tui` | ❌ Utiliser le mode "No Pilot" |
+| Engine | Mode safe (défaut) | Mode trust | Pilote |
+|--------|--------------------|------------|--------|
+| Claude Code | `claude` | `claude --dangerously-skip-permissions` | ✅ |
+| Kiro CLI | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` | ❌ |
 
 ## Terminaux
 

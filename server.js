@@ -11,7 +11,7 @@ const wss = new WebSocketServer({ server, path: '/ws' });
 const ptyManager = new PtyManager();
 
 // In-memory settings
-let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false };
+let settings = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false };
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -34,6 +34,9 @@ app.post('/api/settings', (req, res) => {
   }
   if (req.body.noPilot != null) {
     settings.noPilot = !!req.body.noPilot;
+  }
+  if (req.body.trustMode != null) {
+    settings.trustMode = !!req.body.trustMode;
   }
   res.json(settings);
 });
@@ -148,7 +151,7 @@ app.post('/api/launch', (req, res) => {
   const cwd = req.body.cwd || process.cwd();
   const workers = req.body.workers || settings.workers;
   settings.workers = workers;
-  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode });
   res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });
 
