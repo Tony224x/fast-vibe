@@ -598,17 +598,18 @@ h1, h2, h3, strong { font-family: 'Outfit', sans-serif; }
 /* ── Resize Handle ── */
 
 .resize-handle {
-  height: 5px;
+  height: 6px;
   cursor: row-resize;
-  background: transparent;
+  background: var(--border);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
+  border-radius: 3px;
+  margin: 1px 0;
 }
 
 .resize-handle:hover, .resize-handle.dragging {
   background: var(--primary);
-  opacity: 0.6;
 }
 
 body.resizing { cursor: row-resize !important; user-select: none; }

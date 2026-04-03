@@ -116,9 +116,12 @@ async function launchSession() {
 
   // Hide/show pilot pane based on noPilot mode
   const pilotPane = document.querySelector('.terminal-pane.pilot');
+  const resizeHandle = document.getElementById('resize-handle');
   if (noPilot) {
     if (pilotPane) pilotPane.remove();
+    if (resizeHandle) resizeHandle.classList.add('hidden');
   } else {
+    if (resizeHandle) resizeHandle.classList.remove('hidden');
     // Re-add pilot pane if it was removed in a previous noPilot session
     const terminalsEl = document.getElementById('terminals');
     const grid = document.getElementById('workers-grid');
