@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     trustMode = !!s.trustMode;
     useWSL = !!s.useWSL;
     if (s.lastCwd) document.getElementById('cwd-input').value = s.lastCwd;
+    autoFocus = s.autoFocus !== false;
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
@@ -341,6 +342,7 @@ function openSettings() {
   document.getElementById('setting-no-pilot').checked = noPilot;
   document.getElementById('setting-trust-mode').checked = trustMode;
   document.getElementById('setting-use-wsl').checked = useWSL;
+  document.getElementById('setting-auto-focus').checked = autoFocus;
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -355,11 +357,12 @@ async function saveSettings() {
   noPilot = document.getElementById('setting-no-pilot').checked;
   trustMode = document.getElementById('setting-trust-mode').checked;
   useWSL = document.getElementById('setting-use-wsl').checked;
+  autoFocus = document.getElementById('setting-auto-focus').checked;
 
   await fetch('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode, useWSL }),
+    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus }),
   });
 
   closeSettings();

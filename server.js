@@ -12,7 +12,7 @@ const ptyManager = new PtyManager();
 
 // Persisted settings
 const SETTINGS_FILE = path.join(__dirname, '.settings.json');
-const DEFAULTS = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false };
+const DEFAULTS = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false, autoFocus: true };
 
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; }
@@ -52,6 +52,9 @@ app.post('/api/settings', (req, res) => {
   }
   if (req.body.useWSL != null) {
     settings.useWSL = !!req.body.useWSL;
+  }
+  if (req.body.autoFocus != null) {
+    settings.autoFocus = !!req.body.autoFocus;
   }
   saveSettings();
   res.json(settings);
