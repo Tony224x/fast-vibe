@@ -4,3 +4,5 @@ node_modules/
 .pilot-prompt.md
 .settings.json
 .bookmarks.json
+coverage/
+.playwright-mcp/
