@@ -3,4 +3,4 @@ node_modules/
 *.log
 .pilot-prompt.md
 .settings.json
-.bookmarks.jsonRELEASE.md
+.bookmarks.json

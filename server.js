@@ -12,7 +12,7 @@ const ptyManager = new PtyManager();
 
 // Persisted settings
 const SETTINGS_FILE = path.join(__dirname, '.settings.json');
-const DEFAULTS = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false, autoFocus: true };
+const DEFAULTS = { workers: 4, previewUrl: '', engine: 'claude', noPilot: false, trustMode: false, useWSL: false, autoFocus: true, theme: 'dark', suggestMode: 'off' };
 
 function loadSettings() {
   try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8')) }; }
@@ -20,12 +20,22 @@ function loadSettings() {
 }
 
 function saveSettings() {
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
+  fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), () => {});
 }
 
 let settings = loadSettings();
 
 app.use(express.json());
+
+// CSRF protection: mutating requests must include X-Requested-With header
+// Browsers block cross-origin custom headers without CORS preflight
+app.use((req, res, next) => {
+  if ((req.method === 'POST' || req.method === 'DELETE') && req.headers['x-requested-with'] !== 'FastVibe') {
+    return res.status(403).json({ error: 'Missing X-Requested-With header' });
+  }
+  next();
+});
+
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ── Settings API ──
@@ -36,7 +46,8 @@ app.get('/api/settings', (req, res) => {
 
 app.post('/api/settings', (req, res) => {
   if (req.body.workers != null) {
-    settings.workers = Math.max(1, Math.min(8, parseInt(req.body.workers, 10) || 4));
+    const n = parseInt(req.body.workers, 10);
+    settings.workers = Math.max(1, Math.min(8, isNaN(n) ? 4 : n));
   }
   if (req.body.previewUrl != null) {
     settings.previewUrl = req.body.previewUrl;
@@ -56,6 +67,12 @@ app.post('/api/settings', (req, res) => {
   if (req.body.autoFocus != null) {
     settings.autoFocus = !!req.body.autoFocus;
   }
+  if (req.body.theme != null && ['dark', 'light', 'system'].includes(req.body.theme)) {
+    settings.theme = req.body.theme;
+  }
+  if (req.body.suggestMode != null && ['off', 'static', 'ai'].includes(req.body.suggestMode)) {
+    settings.suggestMode = req.body.suggestMode;
+  }
   saveSettings();
   res.json(settings);
 });
@@ -69,14 +86,18 @@ app.get('/api/status', (req, res) => {
 // ── Bookmarks API ──
 
 const BOOKMARKS_FILE = path.join(__dirname, '.bookmarks.json');
+let bookmarksCache = null;
 
 function loadBookmarks() {
-  try { return JSON.parse(fs.readFileSync(BOOKMARKS_FILE, 'utf8')); }
-  catch { return []; }
+  if (bookmarksCache !== null) return bookmarksCache;
+  try { bookmarksCache = JSON.parse(fs.readFileSync(BOOKMARKS_FILE, 'utf8')); }
+  catch { bookmarksCache = []; }
+  return bookmarksCache;
 }
 
 function saveBookmarks(list) {
-  fs.writeFileSync(BOOKMARKS_FILE, JSON.stringify(list, null, 2));
+  bookmarksCache = list;
+  fs.writeFile(BOOKMARKS_FILE, JSON.stringify(list, null, 2), () => {});
 }
 
 app.get('/api/bookmarks', (req, res) => {
@@ -172,7 +193,7 @@ app.post('/api/launch', (req, res) => {
   settings.workers = workers;
   settings.lastCwd = cwd;
   saveSettings();
-  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL, suggestMode: settings.suggestMode });
   res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });
 
@@ -212,9 +233,44 @@ app.get('/api/terminal/:id/output', (req, res) => {
   res.json({ terminal: id, output });
 });
 
+// ── Suggest API ──
+
+app.post('/api/suggest/:workerId', (req, res) => {
+  const workerId = parseInt(req.params.workerId, 10);
+  ptyManager.generateSuggestion(workerId);
+  const suggestion = ptyManager.getSuggestion(workerId);
+  res.json({ ok: true, suggestion });
+});
+
+app.post('/api/suggest/:workerId/send', (req, res) => {
+  const workerId = parseInt(req.params.workerId, 10);
+  const suggestion = ptyManager.getSuggestion(workerId);
+  const text = req.body.text || (suggestion && suggestion.text);
+  if (!text) return res.status(400).json({ error: 'No suggestion to send' });
+  const ok = ptyManager.sendInput(workerId, text);
+  ptyManager.dismissSuggestion(workerId);
+  res.json({ ok, terminal: workerId });
+});
+
+app.post('/api/suggest/:workerId/dismiss', (req, res) => {
+  const workerId = parseInt(req.params.workerId, 10);
+  ptyManager.dismissSuggestion(workerId);
+  res.json({ ok: true });
+});
+
 // ── WebSocket ──
 
 wss.on('connection', (ws, req) => {
+  // CSWSH protection: reject cross-origin WebSocket connections
+  const origin = req.headers.origin;
+  if (origin) {
+    const allowed = [`http://localhost:${PORT}`, `http://127.0.0.1:${PORT}`];
+    if (!allowed.includes(origin)) {
+      ws.close(4003, 'Origin not allowed');
+      return;
+    }
+  }
+
   const url = new URL(req.url, `http://${req.headers.host}`);
   const index = parseInt(url.searchParams.get('terminal'), 10);
 
@@ -238,6 +294,11 @@ process.on('SIGTERM', () => { cleanup(); process.exit(0); });
 process.on('exit', () => { ptyManager.killAll(); });
 
 const PORT = process.env.PORT || 3333;
-server.listen(PORT, () => {
-  console.log(`fast-vibe running at http://localhost:${PORT}`);
-});
+
+if (require.main === module) {
+  server.listen(PORT, '127.0.0.1', () => {
+    console.log(`fast-vibe running at http://localhost:${PORT}`);
+  });
+}
+
+module.exports = { app, server, wss, ptyManager, PORT, DEFAULTS, loadSettings, saveSettings, settings };

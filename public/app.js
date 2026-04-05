@@ -5,13 +5,20 @@ let noPilot = false;
 let trustMode = false;
 let useWSL = false;
 let autoFocus = true;
+let theme = 'dark';
+let suggestMode = 'off';
 const terminals = [];
+const textDecoder = new TextDecoder();
 let expandedIndex = -1;
 let focusedIndex = 0;
 let launched = false;
+let launchTimestamp = 0;
 let previewVisible = false;
+const unreadTerminals = new Set();
+let lastUserInputAt = 0;
+let sidebarWidth = 240;
 
-const THEME = {
+const THEME_DARK = {
   background: '#1E1A17', foreground: '#F5EFE8', cursor: '#E8601A', cursorAccent: '#1E1A17',
   selectionBackground: 'rgba(232, 96, 26, 0.25)',
   black: '#3D3530', red: '#ff7b72', green: '#3fb950', yellow: '#E8601A',
@@ -19,6 +26,34 @@ const THEME = {
   brightBlack: '#8A7E74', brightRed: '#ffa198', brightGreen: '#56d364', brightYellow: '#F0843F',
   brightBlue: '#E8601A', brightMagenta: '#d2a8ff', brightCyan: '#D4C9BD', brightWhite: '#FFFFFF',
 };
+
+const THEME_LIGHT = {
+  background: '#F5EFE8', foreground: '#2A2420', cursor: '#E8601A', cursorAccent: '#F5EFE8',
+  selectionBackground: 'rgba(232, 96, 26, 0.2)',
+  black: '#2A2420', red: '#d1242f', green: '#1a7f37', yellow: '#C44A0E',
+  blue: '#C44A0E', magenta: '#8250df', cyan: '#8A7E74', white: '#F5EFE8',
+  brightBlack: '#8A7E74', brightRed: '#ff8182', brightGreen: '#3fb950', brightYellow: '#E8601A',
+  brightBlue: '#F0843F', brightMagenta: '#bc8cff', brightCyan: '#D4C9BD', brightWhite: '#FFFFFF',
+};
+
+function getXtermTheme() {
+  const resolved = resolveTheme();
+  return resolved === 'light' ? THEME_LIGHT : THEME_DARK;
+}
+
+function resolveTheme() {
+  if (theme === 'system') {
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  return theme;
+}
+
+function applyTheme() {
+  const resolved = resolveTheme();
+  document.documentElement.dataset.theme = resolved;
+  const xtermTheme = resolved === 'light' ? THEME_LIGHT : THEME_DARK;
+  terminals.forEach(t => { if (t) t.term.options.theme = xtermTheme; });
+}
 
 // ── Init ──
 
@@ -35,10 +70,15 @@ document.addEventListener('DOMContentLoaded', async () => {
     useWSL = !!s.useWSL;
     if (s.lastCwd) document.getElementById('cwd-input').value = s.lastCwd;
     autoFocus = s.autoFocus !== false;
+    suggestMode = s.suggestMode || 'off';
+    theme = s.theme || 'dark';
+    applyTheme();
   } catch {}
 
   document.getElementById('btn-start').addEventListener('click', () => launchSession());
-  document.getElementById('btn-stop').addEventListener('click', () => stopSession());
+  document.getElementById('btn-stop').addEventListener('click', (e) => {
+    inlineConfirm(e.currentTarget, () => stopSession());
+  });
   document.getElementById('btn-settings').addEventListener('click', () => openSettings());
   document.getElementById('btn-settings-save').addEventListener('click', () => saveSettings());
   document.getElementById('btn-settings-cancel').addEventListener('click', () => closeSettings());
@@ -86,15 +126,90 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  // Pane header actions (delegated)
+  document.getElementById('terminals').addEventListener('click', (e) => {
+    const btn = e.target.closest('.btn-pane-action');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const idx = parseInt(btn.dataset.index, 10);
+    if (action === 'compact') compactTerminal(idx);
+    else if (action === 'clear') inlineConfirm(btn, () => clearTerminal(idx));
+    else if (action === 'restart') restartTerminal(idx);
+  });
+
+  // Broadcast
+  document.getElementById('btn-broadcast-send').addEventListener('click', sendBroadcast);
+  document.getElementById('broadcast-input').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') sendBroadcast();
+  });
+
   // Zen mode
   document.getElementById('btn-zen').addEventListener('click', toggleZen);
-  document.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.shiftKey && e.key === 'F') { e.preventDefault(); toggleZen(); }
+
+  // Sidebar hide/show
+  document.getElementById('btn-sidebar-hide').addEventListener('click', toggleSidebar);
+  document.getElementById('btn-sidebar-show').addEventListener('click', toggleSidebar);
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', handleGlobalKeydown);
+
+  // Sidebar resize
+  initSidebarResize();
+
+  // System theme changes
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+    if (theme === 'system') applyTheme();
   });
 
   setInterval(pollStatus, 2000);
+  // Mini-map: poll output snippets every 5s
+  setInterval(pollMiniMap, 5000);
   window.addEventListener('resize', debounce(fitAll, 100));
+
+  // Render welcome projects
+  renderWelcomeProjects();
 });
+
+// ── Keyboard Shortcuts ──
+
+function handleGlobalKeydown(e) {
+  // Ctrl+Shift+F → toggle search in focused terminal (or zen if no terminals)
+  if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+    e.preventDefault();
+    if (launched) toggleTerminalSearch(focusedIndex);
+    else toggleZen();
+    return;
+  }
+  // Ctrl+Shift+B → focus broadcast input in sidebar
+  if (e.ctrlKey && e.shiftKey && e.key === 'B') {
+    e.preventDefault();
+    if (launched) document.getElementById('broadcast-input').focus();
+    return;
+  }
+  // Escape → close expanded / close search
+  if (e.key === 'Escape') {
+    if (searchVisible >= 0) { closeTerminalSearch(); return; }
+    if (expandedIndex >= 0) { toggleExpand(expandedIndex); return; }
+    return;
+  }
+  // Ctrl+1-8 → switch terminal
+  if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '8') {
+    e.preventDefault();
+    const idx = parseInt(e.key, 10) - 1;
+    const totalTerminals = noPilot ? workerCount : 1 + workerCount;
+    if (idx < totalTerminals && launched) setFocused(idx);
+    return;
+  }
+  // Ctrl+] → next terminal, Ctrl+[ → prev terminal
+  if (e.ctrlKey && !e.shiftKey && (e.key === ']' || e.key === '[')) {
+    e.preventDefault();
+    if (!launched) return;
+    const totalTerminals = noPilot ? workerCount : 1 + workerCount;
+    if (e.key === ']') setFocused((focusedIndex + 1) % totalTerminals);
+    else setFocused((focusedIndex - 1 + totalTerminals) % totalTerminals);
+    return;
+  }
+}
 
 // ── Session ──
 
@@ -110,14 +225,10 @@ async function launchSession() {
 
   if (launched) {
     destroyTerminals();
-    await fetch('/api/stop', { method: 'POST' });
+    await postJson('/api/stop');
   }
 
-  await fetch('/api/launch', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cwd, workers: workerCount }),
-  });
+  await postJson('/api/launch', { cwd, workers: workerCount });
 
   // Build worker panes dynamically
   buildWorkerPanes(workerCount);
@@ -131,18 +242,22 @@ async function launchSession() {
   } else {
     if (resizeHandle) resizeHandle.classList.remove('hidden');
     // Re-add pilot pane if it was removed in a previous noPilot session
-    const terminalsEl = document.getElementById('terminals');
     const grid = document.getElementById('workers-grid');
     if (!document.querySelector('.terminal-pane.pilot')) {
       grid.insertAdjacentHTML('beforebegin', `
         <div class="terminal-pane pilot" data-index="0">
           <div class="pane-header">
-            <span class="pane-title">Pilot</span>
+            <span class="pane-title">Pilot<span class="unread-dot"></span></span>
             <span class="pane-status">
               <span class="status-dot"></span>
               <span class="status-text">--</span>
             </span>
-            <button class="btn-expand" data-index="0" title="Expand / Collapse">⛶</button>
+            <span class="pane-actions">
+              <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
+              <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
+              <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
+            </span>
+            <button class="btn-expand" data-index="0" title="Expand / Collapse">&#9974;</button>
           </div>
           <div class="pane-body" id="term-0"></div>
         </div>`);
@@ -155,7 +270,11 @@ async function launchSession() {
   document.getElementById('btn-stop').classList.remove('hidden');
   document.getElementById('session-info').textContent = `${cwd} (${engine}${noPilot ? ', no pilot' : ''}${trustMode ? ', trust' : ', safe'})`;
 
+  // Show broadcast bar in sidebar
+  document.getElementById('broadcast-bar').classList.remove('hidden');
+
   launched = true;
+  launchTimestamp = Date.now();
   const totalTerminals = noPilot ? workerCount : 1 + workerCount;
 
   for (let i = 0; i < totalTerminals; i++) {
@@ -163,7 +282,7 @@ async function launchSession() {
   }
 
   setFocused(noPilot ? 0 : 0);
-  setTimeout(fitAll, 100);
+  scheduleFitAll(100);
 
   // Auto-open preview if URL is set
   if (previewUrl) {
@@ -174,7 +293,7 @@ async function launchSession() {
 }
 
 async function stopSession() {
-  await fetch('/api/stop', { method: 'POST' });
+  await postJson('/api/stop');
   destroyTerminals();
 
   document.getElementById('terminals').classList.add('hidden');
@@ -182,9 +301,12 @@ async function stopSession() {
   document.getElementById('btn-stop').classList.add('hidden');
   document.getElementById('btn-start').classList.remove('hidden');
   document.getElementById('session-info').textContent = '';
+  document.getElementById('broadcast-bar').classList.add('hidden');
 
   launched = false;
   expandedIndex = -1;
+  unreadTerminals.clear();
+  renderWelcomeProjects();
 }
 
 function destroyTerminals() {
@@ -195,6 +317,16 @@ function destroyTerminals() {
     }
   });
   terminals.length = 0;
+  // Clean up auto-focus timers
+  for (const key of Object.keys(termActivity)) {
+    clearTimeout(termActivity[key].timer);
+    delete termActivity[key];
+  }
+  // Clean up receiving timers
+  for (const key of Object.keys(receivingTimers)) {
+    clearTimeout(receivingTimers[key]);
+    delete receivingTimers[key];
+  }
 }
 
 function buildWorkerPanes(count) {
@@ -207,34 +339,38 @@ function buildWorkerPanes(count) {
   const cols = count <= 2 ? count : 2;
   const rows = Math.ceil(count / cols);
 
-  for (let r = 0; r < rows; r++) {
-    if (r > 0) grid.insertAdjacentHTML('beforeend', '<div class="split-h"></div>');
-    const row = document.createElement('div');
-    row.className = 'worker-row';
-    for (let c = 0; c < cols; c++) {
+  for (let c = 0; c < cols; c++) {
+    if (c > 0) grid.insertAdjacentHTML('beforeend', '<div class="split-v"></div>');
+    const col = document.createElement('div');
+    col.className = 'worker-col';
+    for (let r = 0; r < rows; r++) {
       const idx = r * cols + c;
       if (idx >= count) break;
-      if (c > 0) row.insertAdjacentHTML('beforeend', '<div class="split-v"></div>');
+      if (r > 0) col.insertAdjacentHTML('beforeend', '<div class="split-h"></div>');
       const i = startIdx + idx;
       const label = noPilot ? `Worker ${i + 1}` : `Worker ${i}`;
-      row.insertAdjacentHTML('beforeend', `
+      col.insertAdjacentHTML('beforeend', `
         <div class="terminal-pane worker" data-index="${i}" style="flex:1">
           <div class="pane-header">
-            <span class="pane-title">${label}</span>
+            <span class="pane-title">${label}<span class="unread-dot"></span></span>
             <span class="pane-status">
               <span class="status-dot"></span>
               <span class="status-text">--</span>
             </span>
-            <button class="btn-expand" data-index="${i}" title="Expand / Collapse">⛶</button>
+            <span class="pane-actions">
+              <button class="btn-pane-action" data-action="compact" data-index="${i}" title="Compact">&#8860;</button>
+              <button class="btn-pane-action" data-action="clear" data-index="${i}" title="Clear">&#8855;</button>
+              <button class="btn-pane-action" data-action="restart" data-index="${i}" title="Restart">&#8635;</button>
+            </span>
+            <button class="btn-expand" data-index="${i}" title="Expand / Collapse">&#9974;</button>
           </div>
           <div class="pane-body" id="term-${i}"></div>
         </div>
       `);
     }
-    grid.appendChild(row);
+    grid.appendChild(col);
   }
 
-  // Attach splitter drag handlers
   initSplitters(grid);
 }
 
@@ -244,11 +380,18 @@ function createTerminal(index) {
   const term = new Terminal({
     cursorBlink: true, fontSize: 13,
     fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
-    theme: THEME, allowProposedApi: true, scrollback: 5000,
+    theme: getXtermTheme(), allowProposedApi: true, scrollback: 5000,
   });
 
   const fitAddon = new FitAddon.FitAddon();
   term.loadAddon(fitAddon);
+
+  // Search addon
+  let searchAddon = null;
+  if (typeof SearchAddon !== 'undefined') {
+    searchAddon = new SearchAddon.SearchAddon();
+    term.loadAddon(searchAddon);
+  }
 
   const container = document.getElementById(`term-${index}`);
   term.open(container);
@@ -259,10 +402,11 @@ function createTerminal(index) {
   term.onData((data) => {
     const t = terminals[index];
     if (t && t.ws && t.ws.readyState === WebSocket.OPEN) t.ws.send(data);
+    lastUserInputAt = Date.now();
   });
 
   container.addEventListener('mousedown', () => setFocused(index));
-  terminals[index] = { term, fitAddon, ws, index };
+  terminals[index] = { term, fitAddon, searchAddon, ws, index };
 }
 
 function connectWebSocket(index, term) {
@@ -270,8 +414,18 @@ function connectWebSocket(index, term) {
   const ws = new WebSocket(`${protocol}//${location.host}/ws?terminal=${index}`);
 
   ws.onmessage = (e) => {
-    const data = typeof e.data === 'string' ? e.data : new TextDecoder().decode(e.data);
+    const data = typeof e.data === 'string' ? e.data : textDecoder.decode(e.data);
     term.write(data);
+
+    // Activity indicator
+    markReceiving(index, true);
+
+    // Unread tracking
+    if (index !== focusedIndex) {
+      unreadTerminals.add(index);
+      updateUnreadUI(index, true);
+    }
+
     if (autoFocus && index !== focusedIndex) detectTaskDone(index, data);
   };
   ws.onopen = () => {
@@ -291,10 +445,47 @@ function connectWebSocket(index, term) {
   return ws;
 }
 
+// ── Activity Indicator ──
+
+const receivingTimers = {};
+
+function markReceiving(index, active) {
+  const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
+  if (!pane) return;
+  const dot = pane.querySelector('.status-dot');
+  if (active) {
+    dot.classList.add('receiving');
+    clearTimeout(receivingTimers[index]);
+    receivingTimers[index] = setTimeout(() => {
+      dot.classList.remove('receiving');
+    }, 800);
+  } else {
+    dot.classList.remove('receiving');
+  }
+}
+
+// ── Unread Tracking ──
+
+function updateUnreadUI(index, hasUnread) {
+  const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
+  if (pane) {
+    pane.querySelector('.pane-header').classList.toggle('has-unread', hasUnread);
+  }
+  const card = document.querySelector(`.status-card[data-index="${index}"]`);
+  if (card) {
+    card.classList.toggle('has-unread', hasUnread);
+  }
+}
+
 // ── Focus & Expand ──
 
 function setFocused(index) {
   focusedIndex = index;
+  // Clear unread for this terminal
+  if (unreadTerminals.has(index)) {
+    unreadTerminals.delete(index);
+    updateUnreadUI(index, false);
+  }
   document.querySelectorAll('.terminal-pane').forEach((p) => {
     p.classList.toggle('focused', parseInt(p.dataset.index, 10) === index);
   });
@@ -318,17 +509,99 @@ function toggleExpand(index) {
     expandedIndex = index;
   }
   setFocused(index);
-  setTimeout(fitAll, 50);
+  scheduleFitAll();
 }
 
 function fitAll() {
   terminals.forEach((t) => {
     if (!t) return;
+    const el = t.term.element;
+    if (!el || el.offsetHeight === 0) return;
+    const body = el.parentElement;
+    if (body) {
+      const w = body.clientWidth, h = body.clientHeight;
+      if (w === t.lastBodyW && h === t.lastBodyH) return;
+      t.lastBodyW = w;
+      t.lastBodyH = h;
+    }
     t.fitAddon.fit();
-    if (t.ws && t.ws.readyState === WebSocket.OPEN) {
-      t.ws.send(JSON.stringify({ type: 'resize', cols: t.term.cols, rows: t.term.rows }));
+    const cols = t.term.cols, rows = t.term.rows;
+    if (cols !== t.lastCols || rows !== t.lastRows) {
+      t.lastCols = cols;
+      t.lastRows = rows;
+      if (t.ws && t.ws.readyState === WebSocket.OPEN) {
+        t.ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
     }
   });
+}
+
+let fitAllRafPending = false;
+function fitAllRAF() {
+  if (fitAllRafPending) return;
+  fitAllRafPending = true;
+  requestAnimationFrame(() => { fitAllRafPending = false; fitAll(); });
+}
+
+let fitAllTimer = null;
+function scheduleFitAll(ms = 50) {
+  if (fitAllTimer) return;
+  fitAllTimer = setTimeout(() => { fitAllTimer = null; fitAll(); }, ms);
+}
+
+// ── Terminal Search ──
+
+let searchVisible = -1;
+
+function toggleTerminalSearch(index) {
+  if (searchVisible === index) {
+    closeTerminalSearch();
+    return;
+  }
+  closeTerminalSearch();
+  const t = terminals[index];
+  if (!t || !t.searchAddon) return;
+
+  const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
+  if (!pane) return;
+
+  const header = pane.querySelector('.pane-header');
+  const bar = document.createElement('div');
+  bar.className = 'search-bar';
+  bar.id = 'search-bar-active';
+  bar.innerHTML = `<input type="text" placeholder="Search..." spellcheck="false" autocomplete="off">
+    <button data-action="prev" title="Previous">&#9650;</button>
+    <button data-action="next" title="Next">&#9660;</button>
+    <button data-action="close" title="Close">&#10005;</button>`;
+  header.after(bar);
+
+  const input = bar.querySelector('input');
+  input.focus();
+  input.addEventListener('input', () => { t.searchAddon.findNext(input.value); });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.shiftKey ? t.searchAddon.findPrevious(input.value) : t.searchAddon.findNext(input.value); }
+    if (e.key === 'Escape') closeTerminalSearch();
+  });
+  bar.addEventListener('click', (e) => {
+    const action = e.target.dataset?.action;
+    if (action === 'next') t.searchAddon.findNext(input.value);
+    else if (action === 'prev') t.searchAddon.findPrevious(input.value);
+    else if (action === 'close') closeTerminalSearch();
+  });
+
+  searchVisible = index;
+  scheduleFitAll();
+}
+
+function closeTerminalSearch() {
+  const bar = document.getElementById('search-bar-active');
+  if (bar) {
+    const idx = searchVisible;
+    bar.remove();
+    if (terminals[idx]?.searchAddon) terminals[idx].searchAddon.clearDecorations();
+    scheduleFitAll();
+  }
+  searchVisible = -1;
 }
 
 // ── Preview ──
@@ -337,14 +610,22 @@ function togglePreview(show) {
   previewVisible = (show !== undefined) ? show : !previewVisible;
   document.getElementById('preview').classList.toggle('hidden', !previewVisible);
   document.getElementById('app').classList.toggle('has-preview', previewVisible);
-  setTimeout(fitAll, 50);
+  scheduleFitAll();
 }
 
 function toggleZen() {
   const app = document.getElementById('app');
   app.classList.toggle('sidebar-hidden');
   app.classList.toggle('launchbar-hidden');
-  setTimeout(fitAll, 50);
+  document.getElementById('btn-sidebar-show').classList.toggle('hidden', !app.classList.contains('sidebar-hidden'));
+  scheduleFitAll();
+}
+
+function toggleSidebar() {
+  const app = document.getElementById('app');
+  app.classList.toggle('sidebar-hidden');
+  document.getElementById('btn-sidebar-show').classList.toggle('hidden', !app.classList.contains('sidebar-hidden'));
+  scheduleFitAll();
 }
 
 function loadPreview() {
@@ -359,6 +640,62 @@ function refreshPreview() {
   frame.src = frame.src;
 }
 
+// ── Toast System ──
+
+function showToast(message, duration = 3000) {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  container.appendChild(toast);
+  requestAnimationFrame(() => toast.classList.add('show'));
+  setTimeout(() => {
+    toast.classList.remove('show');
+    setTimeout(() => toast.remove(), 300);
+  }, duration);
+}
+
+let notificationPermissionAsked = false;
+
+function notifyTaskDone(label) {
+  // Toast always
+  showToast(`${label} ready`);
+
+  // Browser notification if tab hidden
+  if (document.hidden && typeof Notification !== 'undefined') {
+    if (!notificationPermissionAsked) {
+      notificationPermissionAsked = true;
+      Notification.requestPermission();
+    }
+    if (Notification.permission === 'granted') {
+      new Notification('fast-vibe', { body: `${label} ready`, icon: '/favicon.ico' });
+    }
+  }
+}
+
+// ── Inline Confirm ──
+
+function inlineConfirm(btn, action) {
+  if (btn.dataset.confirming) {
+    action();
+    delete btn.dataset.confirming;
+    btn.innerHTML = btn.dataset.originalHtml;
+    btn.classList.remove('confirming');
+    return;
+  }
+  btn.dataset.originalHtml = btn.innerHTML;
+  btn.dataset.confirming = 'true';
+  btn.innerHTML = 'Confirm?';
+  btn.classList.add('confirming');
+  setTimeout(() => {
+    if (btn.dataset.confirming) {
+      delete btn.dataset.confirming;
+      btn.innerHTML = btn.dataset.originalHtml;
+      btn.classList.remove('confirming');
+    }
+  }, 2000);
+}
+
 // ── Settings ──
 
 function openSettings() {
@@ -369,6 +706,8 @@ function openSettings() {
   document.getElementById('setting-trust-mode').checked = trustMode;
   document.getElementById('setting-use-wsl').checked = useWSL;
   document.getElementById('setting-auto-focus').checked = autoFocus;
+  document.getElementById('setting-suggest-mode').value = suggestMode;
+  document.getElementById('setting-theme').value = theme;
   document.getElementById('settings-overlay').classList.remove('hidden');
 }
 
@@ -384,19 +723,22 @@ async function saveSettings() {
   trustMode = document.getElementById('setting-trust-mode').checked;
   useWSL = document.getElementById('setting-use-wsl').checked;
   autoFocus = document.getElementById('setting-auto-focus').checked;
+  suggestMode = document.getElementById('setting-suggest-mode').value;
+  theme = document.getElementById('setting-theme').value;
 
-  await fetch('/api/settings', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ workers: workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus }),
-  });
+  applyTheme();
+  await postJson('/api/settings', { workers: workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, suggestMode, theme });
 
   closeSettings();
 }
 
-// ── Status ──
+// ── Status Polling ──
+
+let tabHidden = false;
+document.addEventListener('visibilitychange', () => { tabHidden = document.hidden; });
 
 async function pollStatus() {
+  if (!launched || tabHidden) return;
   try {
     const res = await fetch('/api/status');
     const data = await res.json();
@@ -408,48 +750,161 @@ async function pollStatus() {
 function updatePaneDot(index, alive) {
   const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
   if (!pane) return;
-  pane.querySelector('.status-dot').className = `status-dot ${alive ? 'alive' : 'dead'}`;
+  const dot = pane.querySelector('.status-dot');
+  // Don't override receiving animation
+  if (!dot.classList.contains('receiving')) {
+    dot.className = `status-dot ${alive ? 'alive' : 'dead'}`;
+  }
   pane.querySelector('.status-text').textContent = alive ? 'running' : 'stopped';
 }
 
+let sidebarConfirming = false;
+
 function updateSidebar(statuses) {
-  document.getElementById('status-list').innerHTML = statuses.map((s, i) => {
+  // Don't rebuild if an inline confirm is pending — it would wipe the "Confirm?" state
+  if (sidebarConfirming) return;
+
+  const html = statuses.map((s, i) => {
     const label = s.role === 'pilot' ? 'Pilot' : (noPilot ? `Worker ${i + 1}` : `Worker ${i}`);
+    const pid = Number.isFinite(s.pid) ? s.pid : '-';
+    const elapsedStr = s.alive ? escapeHtml(elapsed(s.startedAt)) : 'stopped';
+    const isUnread = unreadTerminals.has(i) ? ' has-unread' : '';
+    const miniPreview = miniMapData[i] ? `<div class="status-card-preview">${escapeHtml(miniMapData[i])}</div>` : '';
     return `
-    <div class="status-card ${i === focusedIndex ? 'active' : ''} ${s.role === 'pilot' ? 'pilot-card' : ''}"
-         data-index="${i}" onclick="setFocused(${i})">
+    <div class="status-card ${i === focusedIndex ? 'active' : ''} ${s.role === 'pilot' ? 'pilot-card' : ''}${isUnread}"
+         data-index="${i}" draggable="true">
       <div class="status-card-header">
         <span class="status-dot ${s.alive ? 'alive' : 'dead'}"></span>
-        <strong>${label}</strong>
+        <strong>${escapeHtml(label)}</strong>
       </div>
       <div class="status-card-info">
-        PID: ${s.pid || '-'} &middot; ${s.alive ? elapsed(s.startedAt) : 'stopped'}
+        PID: ${pid} &middot; ${elapsedStr}
       </div>
+      ${miniPreview}
       ${s.alive ? `<div class="status-card-actions">
-        <button class="btn-ctx" onclick="event.stopPropagation();compactTerminal(${i})" title="Compact context">&#8860; compact</button>
-        <button class="btn-ctx btn-ctx-danger" onclick="event.stopPropagation();clearTerminal(${i})" title="Clear context">&#8855; clear</button>
+        <button class="btn-ctx" data-ctx-action="compact" data-index="${i}" title="Compact context">&#8860; compact</button>
+        <button class="btn-ctx btn-ctx-danger" data-ctx-action="clear" data-index="${i}" title="Clear context">&#8855; clear</button>
+      </div>` : ''}
+      ${s.suggestion ? `<div class="suggest-bar${s.suggestion.pending ? ' pending' : ''}" data-worker="${i}">
+        <div class="suggest-text" title="${escapeHtml(s.suggestion.text)}">${escapeHtml(s.suggestion.text)}</div>
+        <div class="suggest-actions">
+          <button class="btn-suggest-send" data-suggest-action="send" data-index="${i}">Send</button>
+          <button class="btn-suggest-edit" data-suggest-action="edit" data-index="${i}">Edit</button>
+          <button class="btn-suggest-dismiss" data-suggest-action="dismiss" data-index="${i}">&times;</button>
+        </div>
       </div>` : ''}
     </div>`;
   }).join('');
+
+  const list = document.getElementById('status-list');
+  list.innerHTML = html;
+  initSidebarDragDrop(list);
 }
 
+// Event delegation for sidebar actions (survives innerHTML rebuilds)
+document.getElementById('status-list').addEventListener('click', (e) => {
+  const card = e.target.closest('.status-card');
+  const btn = e.target.closest('[data-ctx-action]');
+  const suggestBtn = e.target.closest('[data-suggest-action]');
+  if (suggestBtn) {
+    e.stopPropagation();
+    const idx = parseInt(suggestBtn.dataset.index, 10);
+    const action = suggestBtn.dataset.suggestAction;
+    if (action === 'send') {
+      const bar = suggestBtn.closest('.suggest-bar');
+      const input = bar.querySelector('.suggest-input');
+      const text = input ? input.value : bar.querySelector('.suggest-text')?.textContent;
+      if (text) postJson(`/api/suggest/${idx}/send`, { text });
+    } else if (action === 'edit') {
+      const bar = suggestBtn.closest('.suggest-bar');
+      const textEl = bar.querySelector('.suggest-text');
+      if (textEl && !bar.querySelector('.suggest-input')) {
+        const val = textEl.textContent;
+        textEl.innerHTML = `<input class="suggest-input" type="text" value="${escapeHtml(val)}" spellcheck="false">`;
+        const input = textEl.querySelector('.suggest-input');
+        input.focus();
+        input.select();
+        input.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Enter') {
+            postJson(`/api/suggest/${idx}/send`, { text: input.value });
+          } else if (ev.key === 'Escape') {
+            postJson(`/api/suggest/${idx}/dismiss`);
+          }
+        });
+      }
+    } else if (action === 'dismiss') {
+      postJson(`/api/suggest/${idx}/dismiss`);
+    }
+  } else if (btn) {
+    e.stopPropagation();
+    const idx = parseInt(btn.dataset.index, 10);
+    const action = btn.dataset.ctxAction;
+    if (action === 'compact') compactTerminal(idx);
+    else if (action === 'clear') {
+      sidebarConfirming = true;
+      inlineConfirm(btn, () => { clearTerminal(idx); sidebarConfirming = false; });
+      // Auto-reset if user doesn't confirm within timeout
+      setTimeout(() => { sidebarConfirming = false; }, 2200);
+    }
+  } else if (card) {
+    setFocused(parseInt(card.dataset.index, 10));
+  }
+});
+
+// ── Mini-map ──
+
+const miniMapData = {};
+
+async function pollMiniMap() {
+  if (!launched || tabHidden) return;
+  const total = noPilot ? workerCount : 1 + workerCount;
+  await Promise.all(Array.from({ length: total }, (_, i) =>
+    fetch(`/api/terminal/${i}/output?last=200`)
+      .then(r => r.json())
+      .then(data => {
+        const lines = data.output.trim().split('\n');
+        miniMapData[i] = lines.slice(-3).join('\n').slice(0, 120);
+      })
+      .catch(() => { miniMapData[i] = ''; })
+  ));
+}
+
+// ── Terminal Actions ──
+
 async function compactTerminal(id) {
-  await fetch(`/api/terminal/${id}/compact`, { method: 'POST' });
+  await postJson(`/api/terminal/${id}/compact`);
+  showToast(`Terminal ${id} compacted`);
 }
 
 async function clearTerminal(id) {
-  await fetch(`/api/terminal/${id}/clear`, { method: 'POST' });
+  await postJson(`/api/terminal/${id}/clear`);
+  showToast(`Terminal ${id} cleared`);
 }
 
-function elapsed(iso) {
-  if (!iso) return '-';
-  const sec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (sec < 60) return `${sec}s`;
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  if (m < 60) return `${m}m ${s}s`;
-  const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+async function restartTerminal(id) {
+  // Send restart command via WebSocket
+  const t = terminals[id];
+  if (t && t.ws && t.ws.readyState === WebSocket.OPEN) {
+    t.ws.send(JSON.stringify({ type: 'restart' }));
+    showToast(`Terminal ${id} restarted`);
+  }
+}
+
+// ── Broadcast (sidebar) ──
+
+async function sendBroadcast() {
+  const input = document.getElementById('broadcast-input');
+  const text = input.value.trim();
+  if (!text) return;
+  const startIdx = noPilot ? 0 : 1;
+  const total = noPilot ? workerCount : 1 + workerCount;
+  const promises = [];
+  for (let i = startIdx; i < total; i++) {
+    promises.push(postJson(`/api/terminal/${i}/send`, { text }));
+  }
+  await Promise.all(promises);
+  showToast(`Broadcast sent to ${total - startIdx} workers`);
+  input.value = '';
 }
 
 // ── Splitter drag logic ──
@@ -461,11 +916,10 @@ function initSplitters(container) {
       const prev = handle.previousElementSibling;
       const next = handle.nextElementSibling;
       if (!prev || !next) return;
-      const row = handle.parentElement;
       const startX = e.clientX;
       const prevW = prev.offsetWidth;
       const nextW = next.offsetWidth;
-      document.body.classList.add('resizing');
+      document.body.classList.add('resizing', 'resizing-col');
       handle.classList.add('dragging');
 
       function onMove(e) {
@@ -475,10 +929,10 @@ function initSplitters(container) {
         const total = newPrev + newNext;
         prev.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
         next.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
-        fitAll();
+        fitAllRAF();
       }
       function onUp() {
-        document.body.classList.remove('resizing');
+        document.body.classList.remove('resizing', 'resizing-col');
         handle.classList.remove('dragging');
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
@@ -498,7 +952,7 @@ function initSplitters(container) {
       const startY = e.clientY;
       const prevH = prevRow.offsetHeight;
       const nextH = nextRow.offsetHeight;
-      document.body.classList.add('resizing');
+      document.body.classList.add('resizing', 'resizing-row');
       handle.classList.add('dragging');
 
       function onMove(e) {
@@ -508,10 +962,10 @@ function initSplitters(container) {
         const total = newPrev + newNext;
         prevRow.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
         nextRow.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
-        fitAll();
+        fitAllRAF();
       }
       function onUp() {
-        document.body.classList.remove('resizing');
+        document.body.classList.remove('resizing', 'resizing-row');
         handle.classList.remove('dragging');
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
@@ -526,31 +980,42 @@ function initSplitters(container) {
 // ── Auto-focus on task completion ──
 
 const DONE_PATTERNS = [
-  /❯\s*$/,              // Claude prompt
-  /kiro>\s*$/i,         // Kiro prompt
-  /\$\s*$/,             // bash prompt
+  /\u276f\s*$/m,          // Claude prompt
+  /kiro>\s*$/im,          // Kiro prompt
+  /\$\s*$/m,              // bash prompt
 ];
 
 const termActivity = {};
 
 function detectTaskDone(index, data) {
-  if (!termActivity[index]) termActivity[index] = { timer: null, chunks: 0 };
+  if (!termActivity[index]) termActivity[index] = { timer: null, chunks: 0, buffer: '' };
   const act = termActivity[index];
   act.chunks++;
+  act.buffer += data;
+  if (act.buffer.length > 2000) act.buffer = act.buffer.slice(-2000);
   clearTimeout(act.timer);
 
-  // After 1.5s of silence, check if last data looks like a prompt
   act.timer = setTimeout(() => {
-    if (act.chunks < 5) { act.chunks = 0; return; } // ignore short bursts (startup etc)
-    const clean = data.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').trim();
+    if (act.chunks < 5) { act.chunks = 0; act.buffer = ''; return; }
+    const clean = stripAnsi(act.buffer).trim();
     act.chunks = 0;
+    act.buffer = '';
     for (const pat of DONE_PATTERNS) {
       if (pat.test(clean)) {
-        setFocused(index);
+        const label = (index === 0 && !noPilot) ? 'Pilot' : (noPilot ? `Worker ${index + 1}` : `Worker ${index}`);
+        notifyTaskDone(label);
+        // Don't steal focus if user typed in the last 3s
+        if (Date.now() - lastUserInputAt > 3000) {
+          setFocused(index);
+        }
         const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`);
         if (pane) {
           pane.style.borderColor = 'var(--green)';
           setTimeout(() => { pane.style.borderColor = ''; }, 1500);
+        }
+        // Trigger auto-suggest (skip first 30s after launch — startup noise)
+        if (suggestMode !== 'off' && Date.now() - launchTimestamp > 30000) {
+          postJson(`/api/suggest/${index}`);
         }
         return;
       }
@@ -558,7 +1023,43 @@ function detectTaskDone(index, data) {
   }, 1500);
 }
 
-// ── Resize Handle ──
+// ── Sidebar Resize ──
+
+function initSidebarResize() {
+  const handle = document.getElementById('sidebar-resize-handle');
+  if (!handle) return;
+
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const app = document.getElementById('app');
+    const sidebar = document.getElementById('sidebar');
+    const startX = e.clientX;
+    const startW = sidebar.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.classList.add('resizing', 'resizing-col');
+
+    function onMove(e) {
+      const dx = startX - e.clientX;
+      sidebarWidth = Math.max(60, Math.min(500, startW + dx));
+      const cols = app.classList.contains('has-preview')
+        ? `1fr 1fr 5px ${sidebarWidth}px`
+        : `1fr 5px ${sidebarWidth}px`;
+      app.style.gridTemplateColumns = cols;
+      fitAllRAF();
+    }
+    function onUp() {
+      handle.classList.remove('dragging');
+      document.body.classList.remove('resizing', 'resizing-col');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      fitAll();
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  });
+}
+
+// ── Resize Handle (pilot/workers) ──
 
 (function initResize() {
   const handle = document.getElementById('resize-handle');
@@ -574,7 +1075,7 @@ function detectTaskDone(index, data) {
     startY = e.clientY;
     startPilotH = pilot.offsetHeight;
     handle.classList.add('dragging');
-    document.body.classList.add('resizing');
+    document.body.classList.add('resizing', 'resizing-row');
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
@@ -586,17 +1087,57 @@ function detectTaskDone(index, data) {
     const newH = Math.max(60, Math.min(totalH - 60, startPilotH + (e.clientY - startY)));
     const pct = (newH / totalH * 100).toFixed(1);
     pilot.style.flex = `0 0 ${pct}%`;
-    fitAll();
+    fitAllRAF();
   }
 
   function onUp() {
     handle.classList.remove('dragging');
-    document.body.classList.remove('resizing');
+    document.body.classList.remove('resizing', 'resizing-row');
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     fitAll();
   }
 })();
+
+// ── Drag & Drop Sidebar Cards ──
+
+function initSidebarDragDrop(container) {
+  const cards = container.querySelectorAll('.status-card');
+  cards.forEach(card => {
+    card.addEventListener('dragstart', (e) => {
+      card.classList.add('dragging');
+      e.dataTransfer.setData('text/plain', card.dataset.index);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    card.addEventListener('dragend', () => {
+      card.classList.remove('dragging');
+      container.querySelectorAll('.status-card').forEach(c => c.classList.remove('drag-over'));
+    });
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      card.classList.add('drag-over');
+    });
+    card.addEventListener('dragleave', () => {
+      card.classList.remove('drag-over');
+    });
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const fromIdx = e.dataTransfer.getData('text/plain');
+      const fromCard = container.querySelector(`.status-card[data-index="${fromIdx}"]`);
+      if (fromCard && fromCard !== card) {
+        const rect = card.getBoundingClientRect();
+        const midY = rect.top + rect.height / 2;
+        if (e.clientY < midY) {
+          container.insertBefore(fromCard, card);
+        } else {
+          container.insertBefore(fromCard, card.nextSibling);
+        }
+      }
+    });
+  });
+}
 
 // ── Bookmarks ──
 
@@ -608,6 +1149,7 @@ async function loadBookmarksUI() {
     bookmarks = await res.json();
   } catch { bookmarks = []; }
   updateBookmarkStar();
+  renderWelcomeProjects();
 }
 
 function updateBookmarkStar() {
@@ -623,9 +1165,9 @@ async function addBookmark() {
   if (!p) return;
   const exists = bookmarks.some(b => b.path === p);
   if (exists) {
-    await fetch('/api/bookmarks', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+    await deleteJson('/api/bookmarks', { path: p });
   } else {
-    await fetch('/api/bookmarks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: p }) });
+    await postJson('/api/bookmarks', { path: p });
   }
   await loadBookmarksUI();
 }
@@ -643,10 +1185,10 @@ function renderBookmarks() {
     return;
   }
   dd.innerHTML = bookmarks.map(b => `
-    <div class="bm-item" data-path="${b.path}">
-      <span class="bm-name">${b.name}</span>
-      <span class="bm-path">${b.path}</span>
-      <button class="bm-del" data-del="${b.path}" title="Remove">&#10005;</button>
+    <div class="bm-item" data-path="${escapeHtml(b.path)}">
+      <span class="bm-name">${escapeHtml(b.name)}</span>
+      <span class="bm-path">${escapeHtml(b.path)}</span>
+      <button class="bm-del" data-del="${escapeHtml(b.path)}" title="Remove">&#10005;</button>
     </div>`).join('');
 
   dd.querySelectorAll('.bm-item').forEach(el => {
@@ -660,9 +1202,50 @@ function renderBookmarks() {
   dd.querySelectorAll('.bm-del').forEach(el => {
     el.addEventListener('click', async (e) => {
       e.stopPropagation();
-      await fetch('/api/bookmarks', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: el.dataset.del }) });
+      await deleteJson('/api/bookmarks', { path: el.dataset.del });
       await loadBookmarksUI();
       renderBookmarks();
+    });
+  });
+}
+
+// ── Welcome Screen with Recent Projects ──
+
+function renderWelcomeProjects() {
+  const container = document.getElementById('welcome-projects');
+  if (!container) return;
+
+  // Get lastCwd from the input
+  const lastCwd = document.getElementById('cwd-input').value.trim();
+  const items = [];
+
+  // Add lastCwd as first card if it exists and is not already a bookmark
+  if (lastCwd && !bookmarks.some(b => b.path === lastCwd)) {
+    items.push({ name: lastCwd.split(/[/\\]/).pop() || lastCwd, path: lastCwd, isLast: true });
+  }
+
+  // Add bookmarks
+  bookmarks.forEach(b => {
+    items.push({ name: b.name, path: b.path, isLast: b.path === lastCwd });
+  });
+
+  if (!items.length) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = items.map(item => `
+    <div class="welcome-card ${item.isLast ? 'last-used' : ''}" data-path="${escapeHtml(item.path)}">
+      <div class="welcome-card-name">${escapeHtml(item.name)}</div>
+      <div class="welcome-card-path">${escapeHtml(item.path)}</div>
+    </div>
+  `).join('');
+
+  container.querySelectorAll('.welcome-card').forEach(card => {
+    card.addEventListener('click', () => {
+      document.getElementById('cwd-input').value = card.dataset.path;
+      updateBookmarkStar();
+      launchSession();
     });
   });
 }
@@ -671,7 +1254,7 @@ async function pickFolder() {
   const btn = document.getElementById('btn-browse');
   btn.disabled = true;
   try {
-    const res = await fetch('/api/pick-folder', { method: 'POST' });
+    const res = await postJson('/api/pick-folder');
     const data = await res.json();
     if (data.folder) {
       document.getElementById('cwd-input').value = data.folder;
@@ -681,12 +1264,7 @@ async function pickFolder() {
   btn.disabled = false;
 }
 
-// ── Utils ──
-
-function debounce(fn, ms) {
-  let timer;
-  return (...args) => { clearTimeout(timer); timer = setTimeout(() => fn(...args), ms); };
-}
+// Utils (debounce, escapeHtml, postJson, deleteJson) are defined in utils.js
 
 // ── Directory Browser ──
 
@@ -713,30 +1291,27 @@ function initAutocomplete(input) {
     const parentPath = currentDir ? currentDir.replace(/[/\\][^/\\]*$/, '') : '';
     let html = '';
 
-    // Parent directory link
     if (currentDir && parentPath && parentPath !== currentDir) {
-      html += `<div class="ac-item ac-parent" data-action="parent" data-path="${parentPath}">
+      html += `<div class="ac-item ac-parent" data-action="parent" data-path="${escapeHtml(parentPath)}">
         <span class="ac-icon">&#8617;</span>
         <span class="ac-name">..</span>
-        <span class="ac-path">${parentPath}</span>
+        <span class="ac-path">${escapeHtml(parentPath)}</span>
       </div>`;
     }
 
-    // Current directory — select this one
     if (currentDir) {
-      html += `<div class="ac-item ac-current" data-action="select" data-path="${currentDir}">
+      html += `<div class="ac-item ac-current" data-action="select" data-path="${escapeHtml(currentDir)}">
         <span class="ac-icon">&#10003;</span>
         <span class="ac-name">Select this folder</span>
-        <span class="ac-path">${currentDir}</span>
+        <span class="ac-path">${escapeHtml(currentDir)}</span>
       </div>`;
     }
 
-    // Subdirectories
     html += items.map((item, i) => `
       <div class="ac-item ${i === selectedIdx ? 'selected' : ''}" data-action="enter" data-index="${i}">
         <span class="ac-icon">\u{1F4C1}</span>
-        <span class="ac-name">${item.name}</span>
-        <span class="ac-path">${item.path}</span>
+        <span class="ac-name">${escapeHtml(item.name)}</span>
+        <span class="ac-path">${escapeHtml(item.path)}</span>
       </div>
     `).join('');
 
@@ -764,7 +1339,6 @@ function initAutocomplete(input) {
     input.focus();
   }
 
-  // Open on focus/click
   input.addEventListener('focus', () => { if (!launched) browse(); });
   input.addEventListener('click', () => { if (dropdown.classList.contains('hidden') && !launched) browse(); });
   input.addEventListener('input', () => { browseLazy(); updateBookmarkStar(); });
@@ -789,7 +1363,6 @@ function initAutocomplete(input) {
     }
     else if (e.key === 'Escape') { hide(); }
     else if (e.key === 'Backspace' && input.value.endsWith('\\')) {
-      // Navigate up when deleting trailing backslash
       e.preventDefault();
       const parent = input.value.replace(/[/\\]$/, '').replace(/[/\\][^/\\]*$/, '');
       if (parent) { input.value = parent; browse(parent); }

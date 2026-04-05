@@ -1,27 +1,79 @@
-# v1.2.0 — "Stay in the Flow"
+# fast-vibe v1.3.0
 
-> Persistent settings, auto-focus, resizable panes.
+## Security Hardening
 
-## ✨ Auto-focus on task completion
+- **CSRF protection**: all POST/DELETE requests require `X-Requested-With: FastVibe` header; browsers block cross-origin custom headers without CORS preflight
+- **WebSocket origin check** (CSWSH): rejects connections from origins other than localhost
+- **XSS prevention**: `escapeHtml()` applied to all user-generated content (bookmarks, paths, labels, sidebar cards)
+- **Subresource Integrity** (SRI): `integrity` + `crossorigin` attributes on CDN scripts (xterm, addon-fit)
+- **Localhost-only binding**: server listens on `127.0.0.1` instead of `0.0.0.0`
+- **Input validation**: stricter parseInt handling on settings, whitelisted enum values for theme/suggestMode
 
-Quand un terminal finit sa tâche (prompt CLI détecté après 1.5s de silence), le focus bascule automatiquement dessus avec un flash vert. Plus besoin de cliquer pour enchaîner.
+## Performance
 
-- Détecte les prompts Claude (`❯`), Kiro, et bash (`$`)
-- Ignore les petits bursts (démarrage, outputs courts)
-- Configurable dans les settings (activé par défaut)
+- **Chunked buffer system**: replaces `string +=` concatenation with `chunks[]` array + lazy `.join()` with dirty flag — O(1) append instead of O(n)
+- **WebSocket backpressure**: skips sending when `bufferedAmount > WS_HIGH_WATER` (128 KB)
+- **Faster getOutput**: slices raw buffer first, then strips ANSI on the smaller substring (~25x less regex work)
+- **Smarter fitAll**: skips terminals whose container size hasn't changed; `scheduleFitAll()` and `fitAllRAF()` debounce layout thrashing during resize
+- **Tab-hidden optimization**: status polling and mini-map polling pause when browser tab is hidden
+- **Async file I/O**: `fs.writeFile` (non-blocking) replaces `fs.writeFileSync` for settings, bookmarks, pilot prompt
+- **Bookmarks cache**: in-memory cache avoids re-reading file on every GET
+- **Shared TextDecoder**: single instance reused across all WebSocket messages
 
-## ↕️ Panes redimensionnables
+## UI Enhancements
 
-Barre de resize draggable entre le pilot et les workers. Glisser pour ajuster la répartition de l'espace. Les terminaux se re-fit automatiquement.
+- **Light theme** + **system theme**: dark/light/system toggle in settings; CSS custom properties swap, xterm theme updates live
+- **Toast notifications**: non-blocking slide-in toasts for compact/clear/broadcast/task-done events
+- **Browser notifications**: native `Notification` API when tab is hidden and a worker finishes
+- **Terminal search**: `Ctrl+Shift+F` opens an inline search bar (xterm search addon) with prev/next/close
+- **Broadcast**: sidebar input (`Ctrl+Shift+B`) to send text to all workers at once
+- **Sidebar resize**: draggable handle to adjust sidebar width; collapses/expands with hide/show button
+- **Welcome screen**: project quick-launch cards from bookmarks and last-used path
+- **Mini-map**: 3-line output preview in each sidebar status card (polled every 5s)
+- **Pane header actions**: compact / clear / restart buttons appear on hover
+- **Inline confirm**: destructive actions (clear, stop) require double-click confirmation with 2s timeout
+- **Unread tracking**: orange dot badge on unfocused terminals that received output
+- **Activity pulse**: status dot animates when a terminal is actively receiving data
+- **Drag & drop**: reorder sidebar status cards by dragging
+- **Keyboard shortcuts**: `Ctrl+1-8` switch terminal, `Ctrl+]/[` next/prev, `Escape` close expanded/search
+- **Enhanced tooltips**: CSS-only tooltips on launch bar buttons
+- **Column-based worker grid**: workers arranged in columns instead of rows for better vertical space usage
 
-## 💾 Persistence complète
+## Auto-Suggest System
 
-Tous les paramètres sont maintenant sauvegardés entre les redémarrages :
+- **Static mode**: instant pattern matching against common prompts (y/n, errors, task completion) — zero latency
+- **AI mode**: spawns a dedicated Claude Code "suggesteur" instance that analyzes worker output and proposes responses
+- **Suggest bar**: appears in sidebar cards with send/edit/dismiss actions; editable inline before sending
+- **Configurable**: off / static / ai toggle in settings
 
-- Settings → `.settings.json`
-- Bookmarks → `.bookmarks.json`
-- Dernier chemin projet → pré-rempli au prochain lancement
+## Testing Infrastructure
 
-## 🐛 Bugfix
+- Jest + supertest dev dependencies
+- `__tests__/` directory with server, pty-manager, and utils test suites
+- `npm test` / `npm run test:ci` scripts
+- Server module exports (`app`, `server`, `ptyManager`) for testability
 
-- **WSL auto-launch** — la commande CLI attendait que le shell WSL soit prêt (détection de prompt) au lieu d'un timeout fixe de 500ms qui arrivait trop tôt.
+## Other Improvements
+
+- **Memory leak fix**: proper `.dispose()` on temporary `onData` listeners (launch detection, suggesteur)
+- **Cross-platform newlines**: `\r` on Windows native, `\n` on WSL/Linux
+- **Shared utilities**: `public/utils.js` extracts `debounce`, `escapeHtml`, `stripAnsi`, `elapsed`, `postJson`, `deleteJson`
+- **Smarter auto-focus**: won't steal focus if user typed in the last 3 seconds
+- **Suggest prompt**: `.suggest-prompt.md` system prompt for the AI suggesteur
+- **Static patterns**: `lib/suggest-patterns.js` with 20+ patterns for permission prompts, errors, task completion
+
+## Files Changed
+
+| File | Changes |
+|------|---------|
+| `server.js` | CSRF middleware, WS origin check, suggest API, async writes, localhost binding, module exports |
+| `lib/pty-manager.js` | Chunked buffers, WS backpressure, suggesteur system, listener disposal, cross-platform newlines |
+| `public/app.js` | Theme system, search, broadcast, sidebar resize, welcome screen, mini-map, unread tracking, toasts, keyboard shortcuts, inline confirm |
+| `public/index.html` | SRI attributes, search addon, sidebar resize handle, broadcast bar, welcome projects, theme/suggest settings, keyboard hints |
+| `public/style.css` | Light theme, toast/search/suggest/broadcast/welcome styles, activity pulse, sidebar resize, column grid, drag & drop |
+| `public/utils.js` | **New** — shared utilities (escapeHtml, stripAnsi, debounce, postJson, etc.) |
+| `lib/suggest-patterns.js` | **New** — static suggestion pattern matching |
+| `.suggest-prompt.md` | **New** — AI suggesteur system prompt |
+| `jest.config.js` | **New** — test configuration |
+| `__tests__/` | **New** — test suites |
+| `package.json` | jest + supertest devDependencies, test scripts |

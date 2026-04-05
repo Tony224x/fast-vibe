@@ -6,7 +6,7 @@
   <title>fast-vibe</title>
   <link rel="icon" href="/favicon.ico" sizes="256x256" type="image/x-icon">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=General+Sans:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap">
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -18,17 +18,17 @@
           <span class="launch-logo">fast-vibe</span>
         </div>
         <div class="launch-center">
-          <button id="btn-bookmark" title="Save bookmark">&#9734;</button>
+          <button id="btn-bookmark" data-tooltip="Save bookmark" title="Save bookmark">&#9734;</button>
           <div class="bookmark-wrapper">
-            <button id="btn-bookmarks" title="Bookmarks">&#9776;</button>
+            <button id="btn-bookmarks" data-tooltip="Bookmarks" title="Bookmarks">&#9776;</button>
             <div id="bookmarks-dropdown" class="hidden"></div>
           </div>
-          <button id="btn-browse" title="Browse folders">&#128193;</button>
+          <button id="btn-browse" data-tooltip="Browse folders" title="Browse folders">&#128193;</button>
           <input type="text" id="cwd-input" placeholder="Project directory..." spellcheck="false" autocomplete="off">
           <div id="autocomplete" class="hidden"></div>
           <button id="btn-start">Start</button>
           <button id="btn-stop" class="hidden">Stop</button>
-          <button id="btn-settings" title="Settings">&#9881;</button>
+          <button id="btn-settings" data-tooltip="Settings" title="Settings">&#9881;</button>
         </div>
         <div class="launch-right">
           <span id="session-info"></span>
@@ -40,10 +40,15 @@
         <!-- Pilot -->
         <div class="terminal-pane pilot" data-index="0">
           <div class="pane-header">
-            <span class="pane-title">Pilot</span>
+            <span class="pane-title">Pilot<span class="unread-dot"></span></span>
             <span class="pane-status">
               <span class="status-dot"></span>
               <span class="status-text">--</span>
+            </span>
+            <span class="pane-actions">
+              <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
+              <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
+              <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
             </span>
             <button class="btn-expand" data-index="0" title="Expand / Collapse">⛶</button>
           </div>
@@ -60,6 +65,8 @@
           <h1>fast-vibe</h1>
           <p>1 Pilot + N Workers &mdash; Claude Code &amp; Kiro CLI in parallel</p>
           <p class="welcome-hint">Enter a project directory above and click <strong>Start</strong></p>
+          <div id="welcome-projects"></div>
+          <p class="welcome-hint-keys"><kbd>Ctrl+1-8</kbd> switch terminal &middot; <kbd>Ctrl+Shift+F</kbd> search &middot; <kbd>Ctrl+Shift+B</kbd> broadcast &middot; <kbd>Esc</kbd> close expanded</p>
         </div>
       </div>
     </div>
@@ -75,14 +82,27 @@
       <iframe id="preview-frame" src="about:blank"></iframe>
     </div>
 
+    <!-- Sidebar resize handle -->
+    <div id="sidebar-resize-handle"></div>
     <!-- Sidebar -->
     <div id="sidebar">
+
       <div id="sidebar-header">
         <h2>Status</h2>
-        <button id="btn-preview-toggle" title="Toggle preview">&#9726;</button>
+        <div id="sidebar-header-actions">
+          <button id="btn-preview-toggle" data-tooltip="Toggle preview" title="Toggle preview">&#9726;</button>
+          <button id="btn-sidebar-hide" data-tooltip="Hide sidebar" title="Hide sidebar">&#10095;</button>
+        </div>
       </div>
       <div id="status-list"></div>
+      <!-- Broadcast -->
+      <div id="broadcast-bar" class="hidden">
+        <input type="text" id="broadcast-input" placeholder="Broadcast..." spellcheck="false">
+        <button id="btn-broadcast-send" title="Send to all workers">&#9654;</button>
+      </div>
     </div>
+    <!-- Toast container (inside #app for CSS selector compatibility) -->
+    <div id="toast-container"></div>
   </div>
 
   <!-- Settings Modal -->
@@ -118,9 +138,27 @@
         <span class="setting-hint">Launch CLI inside WSL instead of Windows shell</span>
       </div>
       <div class="setting-row">
+        <label for="setting-theme">Theme</label>
+        <select id="setting-theme">
+          <option value="dark">Dark</option>
+          <option value="light">Light</option>
+          <option value="system">System</option>
+        </select>
+        <span class="setting-hint">Color theme for the interface</span>
+      </div>
+      <div class="setting-row">
         <label for="setting-auto-focus">Auto-focus</label>
         <input type="checkbox" id="setting-auto-focus" checked>
         <span class="setting-hint">Auto-switch to terminal when its task completes</span>
+      </div>
+      <div class="setting-row">
+        <label for="setting-suggest-mode">Auto-suggest</label>
+        <select id="setting-suggest-mode">
+          <option value="off">Off</option>
+          <option value="static">Static (pattern matching)</option>
+          <option value="ai">AI (Claude Code)</option>
+        </select>
+        <span class="setting-hint">Suggest responses when workers finish tasks</span>
       </div>
       <div class="setting-row">
         <label for="setting-preview-url">Preview URL</label>
@@ -135,10 +173,14 @@
   </div>
 
   <!-- Zen mode toggle -->
-  <button id="btn-zen" title="Zen mode (Ctrl+Shift+F)">⛶</button>
+  <button id="btn-zen" title="Zen mode (Ctrl+Shift+F)">&#9974;</button>
+  <!-- Show sidebar (visible when sidebar is hidden) -->
+  <button id="btn-sidebar-show" class="hidden" title="Show sidebar">&#10094;</button>
 
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
-  <script src="/app.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js" integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js" integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js" crossorigin="anonymous"></script>
+  <script defer src="/utils.js"></script>
+  <script defer src="/app.js"></script>
 </body>
 </html>
