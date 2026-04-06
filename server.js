@@ -279,8 +279,49 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  ptyManager.attach(index, ws);
+  try {
+    ptyManager.attach(index, ws);
+  } catch (err) {
+    logServer('attach-error', `terminal=${index} ${err.message}`);
+    ws.close(4001, 'Attach failed');
+  }
 });
+
+// ── Error handling ──
+
+function logServer(tag, ...args) {
+  const ts = new Date().toISOString().slice(11, 23);
+  console.log(`[${ts}] [${tag}]`, ...args);
+}
+
+wss.on('error', (err) => {
+  logServer('wss-error', err.message);
+});
+
+server.on('error', (err) => {
+  logServer('http-error', err.message);
+});
+
+process.on('uncaughtException', (err) => {
+  logServer('uncaught', err.message, err.stack);
+  // Don't exit — keep server alive for running PTY sessions
+});
+
+process.on('unhandledRejection', (reason) => {
+  logServer('rejection', reason);
+});
+
+// ── Memory monitoring ──
+
+setInterval(() => {
+  const mem = process.memoryUsage();
+  const rss = (mem.rss / 1024 / 1024).toFixed(0);
+  const heap = (mem.heapUsed / 1024 / 1024).toFixed(0);
+  const ext = (mem.external / 1024 / 1024).toFixed(0);
+  const status = ptyManager.getStatus();
+  const alive = status.filter(s => s.alive).length;
+  logServer('mem', `rss=${rss}MB heap=${heap}MB ext=${ext}MB ptys=${alive}/${status.length}`);
+}, 60_000);
 
 // ── Shutdown ──
 
@@ -297,7 +338,7 @@ const PORT = process.env.PORT || 3333;
 
 if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () => {
-    console.log(`fast-vibe running at http://localhost:${PORT}`);
+    logServer('start', `fast-vibe v1.0.0 running at http://localhost:${PORT} (pid=${process.pid})`);
   });
 }
 

@@ -1,12 +1,12 @@
 {
   "name": "fast-vibe",
-  "version": "1.0.0",
+  "version": "1.3.1",
   "description": "Web-based terminal multiplexer for 4 parallel Claude Code sessions",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
+    "start": "node app.js",
     "dev": "node --watch server.js",
-    "app": "node app.js",
+    "start:raw": "node server.js",
     "test": "jest --verbose",
     "test:watch": "jest --watch",
     "test:ci": "jest --ci --coverage"
