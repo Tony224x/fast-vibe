@@ -7,3 +7,6 @@ node_modules/
 coverage/
 .playwright-mcp/
 docs/superpowers/
+dist/
+public/bundle.js
+public/bundle.js.map

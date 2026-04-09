@@ -4,12 +4,17 @@
   "description": "Web-based terminal multiplexer for 4 parallel Claude Code sessions",
   "main": "server.js",
   "scripts": {
-    "start": "node app.js",
-    "dev": "node --watch server.js",
-    "start:raw": "node server.js",
+    "build": "tsc && ts-node esbuild.config.ts",
+    "build:client": "ts-node esbuild.config.ts",
+    "build:server": "tsc",
+    "start": "npm run build && node dist/app.js",
+    "dev": "tsc && node --watch dist/server.js",
+    "dev:client": "ts-node esbuild.config.ts",
+    "start:raw": "node dist/server.js",
     "test": "jest --verbose",
     "test:watch": "jest --watch",
-    "test:ci": "jest --ci --coverage"
+    "test:ci": "jest --ci --coverage",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit"
   },
   "dependencies": {
     "express": "^4.21.0",
@@ -17,7 +22,15 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.2",
+    "@types/supertest": "^7.2.0",
+    "@types/ws": "^8.18.1",
+    "esbuild": "^0.28.0",
     "jest": "^30.3.0",
-    "supertest": "^7.2.2"
+    "supertest": "^7.2.2",
+    "ts-jest": "^29.4.9",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.2"
   }
 }
