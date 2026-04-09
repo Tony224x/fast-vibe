@@ -8,6 +8,7 @@ const config: Config = {
   forceExit: true,
   coveragePathIgnorePatterns: ['/node_modules/', '/dist/'],
   moduleNameMapper: { '^node-pty$': '<rootDir>/__mocks__/node-pty.ts' },
+  transform: { '^.+\\.ts$': ['ts-jest', { tsconfig: 'tsconfig.test.json' }] },
 };
 
 export default config;

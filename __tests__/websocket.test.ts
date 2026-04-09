@@ -1,15 +1,15 @@
-const WebSocket = require('ws');
+import WebSocket from 'ws';
 
 jest.mock('node-pty');
 
-const { server, ptyManager, PORT } = require('../../server');
+import { server, ptyManager, PORT } from '../src/server';
 
-let httpServer;
-let port; // actual listening port (random)
+let httpServer: import('http').Server;
+let port: number;
 
 beforeAll((done) => {
   httpServer = server.listen(0, '127.0.0.1', () => {
-    port = httpServer.address().port;
+    port = (httpServer.address() as import('net').AddressInfo).port;
     ptyManager.launchAll(process.cwd(), 2, { engine: 'claude', noPilot: false });
     done();
   });
@@ -20,14 +20,13 @@ afterAll((done) => {
   httpServer.close(done);
 });
 
-function connectWS(opts = {}) {
+function connectWS(opts: { origin?: string; query?: string } = {}) {
   const { origin, query } = opts;
   const headers = origin ? { origin } : {};
   const url = `ws://127.0.0.1:${port}/ws${query || ''}`;
   return new WebSocket(url, { headers });
 }
 
-// Origin validation checks against PORT constant (3333), not actual listening port
 const VALID_ORIGIN = `http://localhost:${PORT}`;
 const VALID_ORIGIN_IP = `http://127.0.0.1:${PORT}`;
 

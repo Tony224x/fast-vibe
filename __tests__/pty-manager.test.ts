@@ -1,24 +1,22 @@
-const fs = require('fs');
-const path = require('path');
-
 jest.mock('node-pty');
+jest.mock('fs', () => {
+  const actual = jest.requireActual('fs');
+  return { ...actual, writeFile: jest.fn((_p: any, _data: any, cb: any) => cb && cb()) };
+});
 
-const { PtyManager, writePilotPrompt, ANSI_RE, MAX_BUFFER, PILOT_PROMPT_FILE } = require('../../lib/pty-manager');
+import * as fs from 'fs';
+import { PtyManager, writePilotPrompt, ANSI_RE, MAX_BUFFER, PILOT_PROMPT_FILE } from '../src/pty-manager';
+
+const mockWriteFile = fs.writeFile as unknown as jest.Mock;
 
 describe('writePilotPrompt', () => {
-  let writeSpy;
-
   beforeEach(() => {
-    writeSpy = jest.spyOn(fs, 'writeFile').mockImplementation((p, data, cb) => cb && cb());
-  });
-
-  afterEach(() => {
-    writeSpy.mockRestore();
+    mockWriteFile.mockClear();
   });
 
   test('generates prompt with correct worker count', () => {
     writePilotPrompt(3);
-    const content = writeSpy.mock.calls[0][1];
+    const content = mockWriteFile.mock.calls[0][1] as string;
     expect(content).toContain('3 EXTERNAL worker');
     expect(content).toContain('workers 1-3');
     expect(content).toContain('1, 2, 3');
@@ -26,13 +24,13 @@ describe('writePilotPrompt', () => {
 
   test('includes CSRF header in curl commands', () => {
     writePilotPrompt(2);
-    const content = writeSpy.mock.calls[0][1];
+    const content = mockWriteFile.mock.calls[0][1] as string;
     expect(content).toContain('X-Requested-With: FastVibe');
   });
 
   test('includes all API endpoints', () => {
     writePilotPrompt(2);
-    const content = writeSpy.mock.calls[0][1];
+    const content = mockWriteFile.mock.calls[0][1] as string;
     expect(content).toContain('/api/terminal/N/send');
     expect(content).toContain('/api/terminal/N/output');
     expect(content).toContain('/api/terminal/N/compact');
@@ -42,7 +40,7 @@ describe('writePilotPrompt', () => {
 });
 
 describe('PtyManager', () => {
-  let mgr;
+  let mgr: PtyManager;
 
   beforeEach(() => {
     mgr = new PtyManager();
@@ -64,7 +62,7 @@ describe('PtyManager', () => {
   describe('launchAll', () => {
     test('creates 1 pilot + N worker slots', () => {
       mgr.launchAll('/tmp', 4, { engine: 'claude', noPilot: false });
-      expect(mgr.count).toBe(5); // 1 pilot + 4 workers
+      expect(mgr.count).toBe(5);
       expect(mgr.slots.length).toBe(5);
     });
 
@@ -84,9 +82,7 @@ describe('PtyManager', () => {
 
     test('kills previous terminals before launching', () => {
       mgr.launchAll('/tmp', 2, {});
-      const firstSlots = mgr.slots.length;
       mgr.launchAll('/tmp', 3, {});
-      // Should have fresh slots, not accumulated
       expect(mgr.slots.length).toBe(4); // 1 pilot + 3 workers
     });
   });
@@ -103,7 +99,7 @@ describe('PtyManager', () => {
     test('returns all workers in noPilot mode', () => {
       mgr.launchAll('/tmp', 2, { engine: 'claude', noPilot: true });
       const status = mgr.getStatus();
-      expect(status.every(s => s.role === 'worker')).toBe(true);
+      expect(status.every((s: any) => s.role === 'worker')).toBe(true);
     });
 
     test('reports alive status correctly', () => {
@@ -115,11 +111,10 @@ describe('PtyManager', () => {
   });
 
   describe('getOutput', () => {
-    // Use manual slot setup to avoid spawn side effects (mock emits data async)
-    function setupSlots(chunks) {
+    function setupSlots(chunks: string[]) {
       const joined = chunks.join('');
-      mgr.slots = [{ pty: null, ws: null, startedAt: null, chunks, chunksTotalLen: joined.length, joinedCache: joined, dirty: false }];
-      mgr.count = 1;
+      (mgr as any).slots = [{ pty: null, ws: null, startedAt: null, chunks, chunksTotalLen: joined.length, joinedCache: joined, dirty: false }];
+      (mgr as any).count = 1;
     }
 
     test('returns empty string for empty buffer', () => {
@@ -149,7 +144,7 @@ describe('PtyManager', () => {
       mgr.launchAll('/tmp', 1, {});
       const result = mgr.sendInput(0, 'hello');
       expect(result).toBe(true);
-      expect(mgr.slots[0].pty.write).toHaveBeenCalledWith('hello');
+      expect(mgr.slots[0].pty!.write).toHaveBeenCalledWith('hello');
     });
 
     test('returns false for invalid index', () => {
@@ -169,7 +164,7 @@ describe('PtyManager', () => {
       mgr.launchAll('/tmp', 1, {});
       const result = mgr.sendCommand(0, '/compact');
       expect(result).toBe(true);
-      expect(mgr.slots[0].pty.write).toHaveBeenCalledWith('/compact\r');
+      expect(mgr.slots[0].pty!.write).toHaveBeenCalledWith('/compact\r');
     });
 
     test('returns false for invalid index', () => {
@@ -198,7 +193,7 @@ describe('PtyManager', () => {
     test('killAll clears all slots', () => {
       mgr.launchAll('/tmp', 3, {});
       mgr.killAll();
-      mgr.slots.forEach(slot => {
+      mgr.slots.forEach((slot: any) => {
         expect(slot.pty).toBeNull();
       });
     });
@@ -213,23 +208,22 @@ describe('PtyManager', () => {
         send: jest.fn(),
         on: jest.fn(),
         removeAllListeners: jest.fn(),
-      };
+      } as any;
       mgr.attach(99, fakeWs);
       expect(fakeWs.close).toHaveBeenCalledWith(4000, expect.any(String));
     });
 
     test('sends buffered output on attach', () => {
-      // Manual slot setup to avoid mock spawn data interference
-      const fakePty = { write: jest.fn(), kill: jest.fn(), onData: jest.fn(() => ({ dispose: jest.fn() })), onExit: jest.fn(() => ({ dispose: jest.fn() })) };
-      mgr.slots = [{ pty: fakePty, ws: null, startedAt: new Date().toISOString(), chunks: ['hello'], chunksTotalLen: 5, joinedCache: 'hello', dirty: false }];
-      mgr.count = 1;
+      const fakePty = { write: jest.fn(), kill: jest.fn(), onData: jest.fn(() => ({ dispose: jest.fn() })), onExit: jest.fn(() => ({ dispose: jest.fn() })) } as any;
+      (mgr as any).slots = [{ pty: fakePty, ws: null, startedAt: new Date().toISOString(), chunks: ['hello'], chunksTotalLen: 5, joinedCache: 'hello', dirty: false }];
+      (mgr as any).count = 1;
       const fakeWs = {
         readyState: 1,
         close: jest.fn(),
         send: jest.fn(),
         on: jest.fn(),
         removeAllListeners: jest.fn(),
-      };
+      } as any;
       mgr.attach(0, fakeWs);
       expect(fakeWs.send).toHaveBeenCalledWith('hello');
     });
@@ -259,7 +253,7 @@ describe('PtyManager', () => {
 
     test('dismissSuggestion removes suggestion', () => {
       mgr.launchAll('/tmp', 2, { suggestMode: 'static' });
-      mgr.suggestions[1] = { text: 'yes', source: 'static', pending: false };
+      (mgr as any).suggestions[1] = { text: 'yes', source: 'static', pending: false };
       mgr.dismissSuggestion(1);
       expect(mgr.getSuggestion(1)).toBeNull();
     });
@@ -272,25 +266,24 @@ describe('PtyManager', () => {
 
     test('generateSuggestion creates static suggestion for matching output', () => {
       mgr.launchAll('/tmp', 1, { suggestMode: 'static' });
-      // Simulate enough output with a permission prompt
       const longOutput = 'x'.repeat(200) + 'Do you want to proceed? (y/n)';
       mgr.slots[0].chunks = [longOutput];
       mgr.slots[0].chunksTotalLen = longOutput.length;
-      mgr.slots[0].joinedCache = longOutput;
-      mgr.slots[0].dirty = false;
+      (mgr.slots[0] as any).joinedCache = longOutput;
+      (mgr.slots[0] as any).dirty = false;
       mgr.generateSuggestion(0);
       const suggestion = mgr.getSuggestion(0);
       expect(suggestion).not.toBeNull();
-      expect(suggestion.text).toBe('yes');
-      expect(suggestion.source).toBe('static');
+      expect(suggestion!.text).toBe('yes');
+      expect(suggestion!.source).toBe('static');
     });
 
     test('generateSuggestion skips short output', () => {
       mgr.launchAll('/tmp', 1, { suggestMode: 'static' });
       mgr.slots[0].chunks = ['short'];
       mgr.slots[0].chunksTotalLen = 5;
-      mgr.slots[0].joinedCache = 'short';
-      mgr.slots[0].dirty = false;
+      (mgr.slots[0] as any).joinedCache = 'short';
+      (mgr.slots[0] as any).dirty = false;
       mgr.generateSuggestion(0);
       expect(mgr.getSuggestion(0)).toBeNull();
     });

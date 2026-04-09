@@ -1,9 +1,9 @@
-const { matchStaticSuggestion, PATTERNS } = require('../../lib/suggest-patterns');
+import { matchStaticSuggestion, PATTERNS } from '../src/suggest-patterns';
 
 describe('matchStaticSuggestion', () => {
   test('returns null for empty/short output', () => {
     expect(matchStaticSuggestion('')).toBeNull();
-    expect(matchStaticSuggestion(null)).toBeNull();
+    expect(matchStaticSuggestion(null as unknown as string)).toBeNull();
     expect(matchStaticSuggestion('hi')).toBeNull();
   });
 
@@ -108,7 +108,6 @@ describe('matchStaticSuggestion', () => {
   // ── Recency (only checks last 1000 chars) ──
 
   test('only matches in last 1000 chars', () => {
-    // Error at the beginning, beyond 1000 chars from the end
     const output = 'Error: old error\n' + 'x'.repeat(2000) + 'All fine now';
     const result = matchStaticSuggestion(output);
     expect(result).toBeNull();
