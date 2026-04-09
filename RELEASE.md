@@ -1,79 +1,104 @@
-# fast-vibe v1.3.0
+# v2.0.0 — "The Great Migration"
 
-## Security Hardening
+> Full JavaScript → TypeScript migration. Zéro feature perdue, zéro régression, type safety partout.
 
-- **CSRF protection**: all POST/DELETE requests require `X-Requested-With: FastVibe` header; browsers block cross-origin custom headers without CORS preflight
-- **WebSocket origin check** (CSWSH): rejects connections from origins other than localhost
-- **XSS prevention**: `escapeHtml()` applied to all user-generated content (bookmarks, paths, labels, sidebar cards)
-- **Subresource Integrity** (SRI): `integrity` + `crossorigin` attributes on CDN scripts (xterm, addon-fit)
-- **Localhost-only binding**: server listens on `127.0.0.1` instead of `0.0.0.0`
-- **Input validation**: stricter parseInt handling on settings, whitelisted enum values for theme/suggestMode
+## 🦋 La Grande Migration
 
-## Performance
+Le codebase entier passe de JavaScript à TypeScript — backend, frontend, tests, build tooling. Chaque fichier est typé, chaque module a sa responsabilité claire.
 
-- **Chunked buffer system**: replaces `string +=` concatenation with `chunks[]` array + lazy `.join()` with dirty flag — O(1) append instead of O(n)
-- **WebSocket backpressure**: skips sending when `bufferedAmount > WS_HIGH_WATER` (128 KB)
-- **Faster getOutput**: slices raw buffer first, then strips ANSI on the smaller substring (~25x less regex work)
-- **Smarter fitAll**: skips terminals whose container size hasn't changed; `scheduleFitAll()` and `fitAllRAF()` debounce layout thrashing during resize
-- **Tab-hidden optimization**: status polling and mini-map polling pause when browser tab is hidden
-- **Async file I/O**: `fs.writeFile` (non-blocking) replaces `fs.writeFileSync` for settings, bookmarks, pilot prompt
-- **Bookmarks cache**: in-memory cache avoids re-reading file on every GET
-- **Shared TextDecoder**: single instance reused across all WebSocket messages
+### Backend (5 modules)
 
-## UI Enhancements
+| Module | Rôle | LOC |
+|--------|------|-----|
+| `src/types.ts` | Types partagés (Settings, Terminal, etc.) | 74 |
+| `src/suggest-patterns.ts` | Pattern matching auto-suggest | 47 |
+| `src/pty-manager.ts` | Gestion des PTY, buffers, lifecycle | 625 |
+| `src/server.ts` | Express routes, WebSocket, API | 345 |
+| `src/app.ts` | Entry point, server bootstrap | 105 |
 
-- **Light theme** + **system theme**: dark/light/system toggle in settings; CSS custom properties swap, xterm theme updates live
-- **Toast notifications**: non-blocking slide-in toasts for compact/clear/broadcast/task-done events
-- **Browser notifications**: native `Notification` API when tab is hidden and a worker finishes
-- **Terminal search**: `Ctrl+Shift+F` opens an inline search bar (xterm search addon) with prev/next/close
-- **Broadcast**: sidebar input (`Ctrl+Shift+B`) to send text to all workers at once
-- **Sidebar resize**: draggable handle to adjust sidebar width; collapses/expands with hide/show button
-- **Welcome screen**: project quick-launch cards from bookmarks and last-used path
-- **Mini-map**: 3-line output preview in each sidebar status card (polled every 5s)
-- **Pane header actions**: compact / clear / restart buttons appear on hover
-- **Inline confirm**: destructive actions (clear, stop) require double-click confirmation with 2s timeout
-- **Unread tracking**: orange dot badge on unfocused terminals that received output
-- **Activity pulse**: status dot animates when a terminal is actively receiving data
-- **Drag & drop**: reorder sidebar status cards by dragging
-- **Keyboard shortcuts**: `Ctrl+1-8` switch terminal, `Ctrl+]/[` next/prev, `Escape` close expanded/search
-- **Enhanced tooltips**: CSS-only tooltips on launch bar buttons
-- **Column-based worker grid**: workers arranged in columns instead of rows for better vertical space usage
+Compilé avec `tsc` → `dist/`.
 
-## Auto-Suggest System
+### Frontend (15 modules)
 
-- **Static mode**: instant pattern matching against common prompts (y/n, errors, task completion) — zero latency
-- **AI mode**: spawns a dedicated Claude Code "suggesteur" instance that analyzes worker output and proposes responses
-- **Suggest bar**: appears in sidebar cards with send/edit/dismiss actions; editable inline before sending
-- **Configurable**: off / static / ai toggle in settings
+Le monolithe `public/app.js` (1350 lignes) est découpé en 15 modules TypeScript ciblés :
 
-## Testing Infrastructure
+`app` · `state` · `utils` · `theme` · `terminal` · `session` · `settings` · `sidebar` · `bookmarks` · `autocomplete` · `ui-helpers` · `toast` · `preview` · `search` · `keyboard`
 
-- Jest + supertest dev dependencies
-- `__tests__/` directory with server, pty-manager, and utils test suites
-- `npm test` / `npm run test:ci` scripts
-- Server module exports (`app`, `server`, `ptyManager`) for testability
+Bundlé avec **esbuild** → `public/bundle.js` (52 KB).
 
-## Other Improvements
+### Tests (5 suites)
 
-- **Memory leak fix**: proper `.dispose()` on temporary `onData` listeners (launch detection, suggesteur)
-- **Cross-platform newlines**: `\r` on Windows native, `\n` on WSL/Linux
-- **Shared utilities**: `public/utils.js` extracts `debounce`, `escapeHtml`, `stripAnsi`, `elapsed`, `postJson`, `deleteJson`
-- **Smarter auto-focus**: won't steal focus if user typed in the last 3 seconds
-- **Suggest prompt**: `.suggest-prompt.md` system prompt for the AI suggesteur
-- **Static patterns**: `lib/suggest-patterns.js` with 20+ patterns for permission prompts, errors, task completion
+| Suite | Scope |
+|-------|-------|
+| `server.test.ts` | Routes API, CSRF, settings |
+| `pty-manager.test.ts` | PTY lifecycle, buffers, output |
+| `utils.test.ts` | Utilitaires partagés |
+| `websocket.test.ts` | WebSocket connections, origin check |
+| `suggest-patterns.test.ts` | Pattern matching |
 
-## Files Changed
+**146 tests**, tous passent via `ts-jest`.
 
-| File | Changes |
-|------|---------|
-| `server.js` | CSRF middleware, WS origin check, suggest API, async writes, localhost binding, module exports |
-| `lib/pty-manager.js` | Chunked buffers, WS backpressure, suggesteur system, listener disposal, cross-platform newlines |
-| `public/app.js` | Theme system, search, broadcast, sidebar resize, welcome screen, mini-map, unread tracking, toasts, keyboard shortcuts, inline confirm |
-| `public/index.html` | SRI attributes, search addon, sidebar resize handle, broadcast bar, welcome projects, theme/suggest settings, keyboard hints |
-| `public/style.css` | Light theme, toast/search/suggest/broadcast/welcome styles, activity pulse, sidebar resize, column grid, drag & drop |
-| `public/utils.js` | **New** — shared utilities (escapeHtml, stripAnsi, debounce, postJson, etc.) |
-| `lib/suggest-patterns.js` | **New** — static suggestion pattern matching |
-| `.suggest-prompt.md` | **New** — AI suggesteur system prompt |
-| `jest.config.js` | **New** — test configuration |
-| `__tests__/` | **New** — test suites |
-| `package.json` | jest + supertest devDependencies, test scripts |
+## 📐 Architecture
+
+```
+src/
+├── types.ts                  # Types partagés
+├── suggest-patterns.ts       # Auto-suggest patterns
+├── pty-manager.ts            # PTY manager
+├── server.ts                 # Express + WS
+├── app.ts                    # Entry point
+└── client/
+    ├── app.ts                # Client entry
+    ├── state.ts              # État global (setState)
+    ├── utils.ts              # Helpers
+    ├── theme.ts              # Dark/light/system
+    ├── terminal.ts           # xterm.js wrapper
+    ├── session.ts            # Launch/stop logic
+    ├── settings.ts           # Settings modal
+    ├── sidebar.ts            # Status cards
+    ├── bookmarks.ts          # Directory bookmarks
+    ├── autocomplete.ts       # Path autocomplete
+    ├── ui-helpers.ts         # DOM helpers
+    ├── toast.ts              # Notifications
+    ├── preview.ts            # iframe preview
+    ├── search.ts             # Terminal search
+    └── keyboard.ts           # Shortcuts
+```
+
+## 🔧 Build Tooling
+
+- **TypeScript 6** — strict mode, types partagés via `src/types.ts`
+- **esbuild** — bundle client en ~50ms
+- **ts-jest** — tests natifs TypeScript, pas de transpilation séparée
+- **Dual tsconfig** — `tsconfig.json` (backend Node) + `tsconfig.client.json` (frontend DOM)
+- **Typecheck** — `npm run typecheck` vérifie backend + client sans émettre
+
+## 📊 Chiffres
+
+| Métrique | Valeur |
+|----------|--------|
+| Fichiers source TS | 20 |
+| LOC source | 2 689 |
+| LOC tests | 1 191 |
+| Tests | 146 |
+| Suites | 5 |
+| Bundle client | 52 KB |
+| Deps runtime | 3 (express, node-pty, ws) |
+| Commits migration | 16 |
+
+## 💀 Ce qui a été supprimé
+
+- `server.js`, `pty-manager.js`, `suggest-patterns.js` — remplacés par les `.ts`
+- `public/app.js` (1350 lignes) — remplacé par 15 modules client
+- `public/utils.js` — absorbé dans `src/client/utils.ts`
+
+## ⬆️ Upgrade
+
+```bash
+git pull
+npm install    # nouvelles devDeps (typescript, esbuild, ts-jest, @types/*)
+npm run build  # tsc + esbuild
+npm start      # comme avant
+```
+
+Aucun changement d'API, aucun changement de comportement. Drop-in replacement.
