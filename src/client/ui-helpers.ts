@@ -133,14 +133,15 @@ export function initSplitters(container: HTMLElement): void {
 export function initSidebarResize(): void {
   const handle = document.getElementById('sidebar-resize-handle');
   if (!handle) return;
+  const h = handle;
 
-  handle.addEventListener('mousedown', (e) => {
+  h.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const app = document.getElementById('app')!;
     const sidebar = document.getElementById('sidebar')!;
     const startX = e.clientX;
     const startW = sidebar.offsetWidth;
-    handle.classList.add('dragging');
+    h.classList.add('dragging');
     document.body.classList.add('resizing', 'resizing-col');
 
     function onMove(e: MouseEvent) {
@@ -154,7 +155,7 @@ export function initSidebarResize(): void {
       fitAllRAF();
     }
     function onUp() {
-      handle.classList.remove('dragging');
+      h.classList.remove('dragging');
       document.body.classList.remove('resizing', 'resizing-col');
       document.removeEventListener('mousemove', onMove);
       document.removeEventListener('mouseup', onUp);
@@ -168,17 +169,18 @@ export function initSidebarResize(): void {
 export function initPilotResize(): void {
   const handle = document.getElementById('resize-handle');
   if (!handle) return;
+  const h = handle;
 
   let startY: number, startPilotH: number, container: HTMLElement;
 
-  handle.addEventListener('mousedown', (e) => {
+  h.addEventListener('mousedown', (e) => {
     e.preventDefault();
     const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
     if (!pilot || pilot.classList.contains('hidden')) return;
     container = document.getElementById('terminals')!;
     startY = e.clientY;
     startPilotH = pilot.offsetHeight;
-    handle.classList.add('dragging');
+    h.classList.add('dragging');
     document.body.classList.add('resizing', 'resizing-row');
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
@@ -195,7 +197,7 @@ export function initPilotResize(): void {
   }
 
   function onUp() {
-    handle.classList.remove('dragging');
+    h.classList.remove('dragging');
     document.body.classList.remove('resizing', 'resizing-row');
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);

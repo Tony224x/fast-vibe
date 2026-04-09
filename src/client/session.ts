@@ -111,13 +111,13 @@ export function destroyTerminals(): void {
   terminals.length = 0;
   // Clean up auto-focus timers
   for (const key of Object.keys(termActivity)) {
-    clearTimeout(termActivity[key as any].timer!);
-    delete termActivity[key as any];
+    clearTimeout(termActivity[Number(key)].timer!);
+    delete termActivity[Number(key)];
   }
   // Clean up receiving timers
   for (const key of Object.keys(receivingTimers)) {
-    clearTimeout(receivingTimers[key as any]);
-    delete receivingTimers[key as any];
+    clearTimeout(receivingTimers[Number(key)]);
+    delete receivingTimers[Number(key)];
   }
 }
 

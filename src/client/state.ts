@@ -31,26 +31,27 @@ export const terminals: TerminalEntry[] = [];
 export const textDecoder = new TextDecoder();
 export const unreadTerminals = new Set<number>();
 
-const setters: Record<string, (v: any) => void> = {
-  workerCount:     (v) => { workerCount = v; },
-  previewUrl:      (v) => { previewUrl = v; },
-  engine:          (v) => { engine = v; },
-  noPilot:         (v) => { noPilot = v; },
-  trustMode:       (v) => { trustMode = v; },
-  useWSL:          (v) => { useWSL = v; },
-  autoFocus:       (v) => { autoFocus = v; },
-  theme:           (v) => { theme = v; },
-  suggestMode:     (v) => { suggestMode = v; },
-  expandedIndex:   (v) => { expandedIndex = v; },
-  focusedIndex:    (v) => { focusedIndex = v; },
-  launched:        (v) => { launched = v; },
-  launchTimestamp:  (v) => { launchTimestamp = v; },
-  previewVisible:  (v) => { previewVisible = v; },
-  lastUserInputAt: (v) => { lastUserInputAt = v; },
-  sidebarWidth:    (v) => { sidebarWidth = v; },
-};
+const setters = {
+  workerCount:     (v: number) => { workerCount = v; },
+  previewUrl:      (v: string) => { previewUrl = v; },
+  engine:          (v: string) => { engine = v; },
+  noPilot:         (v: boolean) => { noPilot = v; },
+  trustMode:       (v: boolean) => { trustMode = v; },
+  useWSL:          (v: boolean) => { useWSL = v; },
+  autoFocus:       (v: boolean) => { autoFocus = v; },
+  theme:           (v: string) => { theme = v; },
+  suggestMode:     (v: string) => { suggestMode = v; },
+  expandedIndex:   (v: number) => { expandedIndex = v; },
+  focusedIndex:    (v: number) => { focusedIndex = v; },
+  launched:        (v: boolean) => { launched = v; },
+  launchTimestamp:  (v: number) => { launchTimestamp = v; },
+  previewVisible:  (v: boolean) => { previewVisible = v; },
+  lastUserInputAt: (v: number) => { lastUserInputAt = v; },
+  sidebarWidth:    (v: number) => { sidebarWidth = v; },
+} as const;
 
-export function setState(key: string, value: unknown): void {
-  const setter = setters[key];
-  if (setter) setter(value);
+export type StateKey = keyof typeof setters;
+
+export function setState<K extends StateKey>(key: K, value: Parameters<(typeof setters)[K]>[0]): void {
+  (setters[key] as (v: Parameters<(typeof setters)[K]>[0]) => void)(value);
 }
