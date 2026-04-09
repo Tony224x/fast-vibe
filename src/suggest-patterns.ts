@@ -32,7 +32,7 @@ export const PATTERNS: Pattern[] = [
   { re: /All tests pass|✓.*tests?\s+pass/i, suggest: '/compact', confidence: 'low' },
 ];
 
-export function matchStaticSuggestion(output: string): { text: string; confidence: string } | null {
+export function matchStaticSuggestion(output: string): { text: string; confidence: 'high' | 'medium' | 'low' } | null {
   if (!output || output.length < 5) return null;
 
   const tail = output.slice(-1000);

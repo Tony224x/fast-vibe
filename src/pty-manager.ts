@@ -469,7 +469,7 @@ export class PtyManager {
 
     proc.onExit(() => {
       if (this.suggesteur && this.suggesteur.pty === proc) {
-        this.suggesteur.pty = null as unknown as IPty;
+        this.suggesteur.pty = null;
         this.suggesteur.ready = false;
       }
     });

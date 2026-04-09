@@ -36,7 +36,7 @@ export interface Suggestion {
 }
 
 export interface SuggesteurState {
-  pty: IPty;
+  pty: IPty | null;
   chunks: string[];
   chunksTotalLen: number;
   joinedCache: string;

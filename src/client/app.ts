@@ -1,4 +1,4 @@
-import { setState } from './state';
+import { setState, theme } from './state';
 import { applyTheme } from './theme';
 import { handleGlobalKeydown } from './keyboard';
 import { launchSession, stopSession } from './session';
@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // System theme changes
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
-    applyTheme();
+    if (theme === 'system') applyTheme();
   });
 
   setInterval(pollStatus, 2000);
