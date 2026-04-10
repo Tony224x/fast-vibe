@@ -21,7 +21,9 @@ function loadSettings(): Settings {
 }
 
 function saveSettings(): void {
-  fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), () => {});
+  fs.writeFile(SETTINGS_FILE, JSON.stringify(settings, null, 2), (err) => {
+    if (err) console.error('[settings] write error:', err.message);
+  });
 }
 
 let settings: Settings = loadSettings();
