@@ -4,10 +4,14 @@ declare class Terminal {
   rows: number;
   element: HTMLElement | undefined;
   options: Record<string, unknown>;
+  buffer: { active: { viewportY: number; baseY: number } };
   open(container: HTMLElement): void;
   write(data: string): void;
   dispose(): void;
   onData(cb: (data: string) => void): void;
+  onScroll(cb: (newPosition: number) => void): void;
+  scrollToBottom(): void;
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void;
   focus(): void;
   loadAddon(addon: unknown): void;
 }

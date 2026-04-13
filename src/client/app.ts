@@ -8,7 +8,7 @@ import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } 
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal } from './ui-helpers';
 import { debounce } from './utils';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -89,6 +89,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (action === 'compact') compactTerminal(idx);
     else if (action === 'clear') inlineConfirm(btn, () => clearTerminal(idx));
     else if (action === 'restart') restartTerminal(idx);
+    else if (action === 'verify') verifyTerminal(idx);
   });
 
   // Broadcast

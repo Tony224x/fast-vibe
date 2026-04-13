@@ -232,6 +232,7 @@ h1, h2, h3, strong { font-family: 'Outfit', sans-serif; }
   border-radius: 8px;
   overflow: hidden;
   min-height: 0;
+  isolation: isolate;
 }
 
 .terminal-pane.focused {
@@ -313,7 +314,7 @@ body.resizing .split-h { cursor: row-resize; }
 .status-dot.alive { background: var(--green); }
 .status-dot.dead { background: var(--red); }
 .status-text { color: var(--fg-muted); font-size: 11px; }
-.pane-body { flex: 1; overflow: hidden; min-height: 0; }
+.pane-body { flex: 1; overflow: hidden; min-height: 0; position: relative; }
 .pane-body .xterm { height: 100%; padding: 2px; }
 
 .btn-expand {
@@ -1030,6 +1031,42 @@ body.resizing .terminal-pane { transition: none; }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Scroll-to-bottom Button ── */
+
+.btn-scroll-bottom {
+  position: absolute;
+  bottom: 12px;
+  right: 16px;
+  z-index: 20;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  opacity: 0.85;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.btn-scroll-bottom:hover { opacity: 1; transform: scale(1.1); }
+.btn-scroll-bottom.hidden { display: none; }
+
+/* ── Verify Button ── */
+
+.btn-verify {
+  color: var(--green) !important;
+  font-weight: 600;
+}
+
+.btn-verify:hover { background: rgba(63, 185, 80, 0.15) !important; }
 
 /* ── Zen Mode ── */
 

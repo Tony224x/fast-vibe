@@ -217,6 +217,26 @@ export function createTerminal(index: number): void {
   term.open(container);
   requestAnimationFrame(() => fitAddon.fit());
 
+  // Scroll-to-bottom button
+  const scrollBtn = document.createElement('button');
+  scrollBtn.className = 'btn-scroll-bottom hidden';
+  scrollBtn.innerHTML = '&#8595;';
+  scrollBtn.title = 'Scroll to bottom';
+  scrollBtn.addEventListener('click', () => { term.scrollToBottom(); });
+  container.appendChild(scrollBtn);
+
+  term.onScroll(() => {
+    const atBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
+    scrollBtn.classList.toggle('hidden', atBottom);
+  });
+
+  // Let Ctrl+1-8 and Ctrl+[/] bubble to document handler instead of being eaten by xterm
+  term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '8') return false;
+    if (e.ctrlKey && !e.shiftKey && (e.key === ']' || e.key === '[')) return false;
+    return true;
+  });
+
   const ws = connectWebSocket(index, term);
 
   term.onData((data: string) => {
