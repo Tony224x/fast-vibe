@@ -320,9 +320,10 @@ export class PtyManager {
     if (index >= this.slots.length) return false;
     const slot = this.slots[index];
     if (!slot.pty) return false;
-    // Write text, then send Enter after a short delay
-    // (Claude Code paste mode needs a separate Enter to submit)
-    safeWrite(slot.pty, text.replace(/\n/g, '\r'));
+    // Use bracketed paste mode so multiline text is treated as a single
+    // paste event instead of each newline being interpreted as Enter/submit.
+    const payload = text.replace(/\n/g, '\r');
+    safeWrite(slot.pty, `\x1b[200~${payload}\x1b[201~`);
     setTimeout(() => {
       safeWrite(slot.pty, '\r');
     }, 100);

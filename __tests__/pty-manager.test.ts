@@ -144,7 +144,7 @@ describe('PtyManager', () => {
       mgr.launchAll('/tmp', 1, {});
       const result = mgr.sendInput(0, 'hello');
       expect(result).toBe(true);
-      expect(mgr.slots[0].pty!.write).toHaveBeenCalledWith('hello');
+      expect(mgr.slots[0].pty!.write).toHaveBeenCalledWith('\x1b[200~hello\x1b[201~');
     });
 
     test('returns false for invalid index', () => {
