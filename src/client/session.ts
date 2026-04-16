@@ -1,4 +1,4 @@
-import { terminals, noPilot, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState } from './state';
+import { terminals, noPilot, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState, sessionTimerInterval, launchTimestamp } from './state';
 import { postJson } from './utils';
 import { createTerminal, setFocused, scheduleFitAll, termActivity, receivingTimers } from './terminal';
 import { togglePreview, loadPreview } from './preview';
@@ -46,6 +46,7 @@ export async function launchSession(): Promise<void> {
             </span>
             <span class="pane-actions">
               <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" title="Send code review prompt">&#10003; Verify</button>
+              <button class="btn-pane-action" data-action="copy" data-index="0" title="Copy output">&#128203;</button>
               <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
               <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
               <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
@@ -68,6 +69,18 @@ export async function launchSession(): Promise<void> {
 
   setState('launched', true);
   setState('launchTimestamp', Date.now());
+
+  // Session timer
+  const infoEl = document.getElementById('session-info')!;
+  const infoBase = `${cwd} (${engine}${noPilot ? ', no pilot' : ''}${trustMode ? ', trust' : ', safe'})`;
+  if (sessionTimerInterval) clearInterval(sessionTimerInterval);
+  setState('sessionTimerInterval', setInterval(() => {
+    const sec = Math.floor((Date.now() - launchTimestamp) / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    infoEl.textContent = `${infoBase} · ${m}m ${s}s`;
+  }, 1000));
+
   const totalTerminals = noPilot ? workerCount : 1 + workerCount;
 
   for (let i = 0; i < totalTerminals; i++) {
@@ -98,6 +111,7 @@ export async function stopSession(): Promise<void> {
 
   setState('launched', false);
   setState('expandedIndex', -1);
+  if (sessionTimerInterval) { clearInterval(sessionTimerInterval); setState('sessionTimerInterval', null); }
   unreadTerminals.clear();
   renderWelcomeProjects();
 }
@@ -152,6 +166,7 @@ export function buildWorkerPanes(count: number): void {
             </span>
             <span class="pane-actions">
               <button class="btn-pane-action btn-verify" data-action="verify" data-index="${i}" title="Send code review prompt">&#10003; Verify</button>
+              <button class="btn-pane-action" data-action="copy" data-index="${i}" title="Copy output">&#128203;</button>
               <button class="btn-pane-action" data-action="compact" data-index="${i}" title="Compact">&#8860;</button>
               <button class="btn-pane-action" data-action="clear" data-index="${i}" title="Clear">&#8855;</button>
               <button class="btn-pane-action" data-action="restart" data-index="${i}" title="Restart">&#8635;</button>

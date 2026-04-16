@@ -2,13 +2,13 @@ import { setState, theme } from './state';
 import { applyTheme } from './theme';
 import { handleGlobalKeydown } from './keyboard';
 import { launchSession, stopSession } from './session';
-import { openSettings, saveSettings, closeSettings } from './settings';
+import { openSettings, saveSettings, closeSettings, initProfilesUI } from './settings';
 import { loadBookmarksUI, addBookmark, toggleBookmarks, pickFolder, renderWelcomeProjects, updateBookmarkStar } from './bookmarks';
 import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } from './preview';
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput } from './ui-helpers';
 import { debounce } from './utils';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -90,6 +90,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     else if (action === 'clear') inlineConfirm(btn, () => clearTerminal(idx));
     else if (action === 'restart') restartTerminal(idx);
     else if (action === 'verify') verifyTerminal(idx);
+    else if (action === 'copy') copyOutput(idx);
   });
 
   // Broadcast
@@ -126,4 +127,5 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Sidebar click delegation
   initSidebarClickDelegation();
+  initProfilesUI();
 });

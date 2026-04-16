@@ -90,6 +90,9 @@ export class PtyManager {
   suggestions: Record<number, Suggestion>;
   suggestQueue: Array<{ workerId: number; output: string }>;
   suggestBusy: boolean;
+  logsEnabled: boolean;
+  logsDir: string;
+  autoRestart: boolean;
 
   constructor() {
     this.count = 0;
@@ -100,6 +103,9 @@ export class PtyManager {
     this.trustMode = false;
     this.useWSL = false;
     this.suggestMode = 'off';
+    this.logsEnabled = false;
+    this.logsDir = '';
+    this.autoRestart = true;
     // Suggesteur state
     this.suggesteur = null;
     this.suggestions = {};
@@ -153,6 +159,10 @@ export class PtyManager {
         slot.chunks = [slot.joinedCache];
         slot.chunksTotalLen = slot.joinedCache.length;
         slot.dirty = false;
+      }
+      if (this.logsEnabled && this.logsDir) {
+        const stripped = data.replace(ANSI_RE, '');
+        fs.appendFile(path.join(this.logsDir, `terminal-${index}.log`), stripped, () => {});
       }
       try {
         if (slot.ws && slot.ws.readyState === 1 && slot.ws.bufferedAmount < WS_HIGH_WATER) {
@@ -214,6 +224,12 @@ export class PtyManager {
           slot.ws.send(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`);
         }
       } catch { /* WS gone */ }
+      // Auto-restart on unexpected exit
+      if (this.autoRestart && exitCode !== 0 && slot.restartCount < 3) {
+        slot.restartCount++;
+        log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in 3s`);
+        setTimeout(() => { this.spawn(index, this.cwd); }, 3000);
+      }
     });
 
     return proc;
@@ -260,11 +276,15 @@ export class PtyManager {
             this.restart(index);
             return;
           }
+          if (parsed.type === 'raw' && typeof parsed.data === 'string') {
+            safeWrite(slot.pty, parsed.data);
+            return;
+          }
         } catch { /* not JSON */ }
       }
 
       if (slot.pty) {
-        safeWrite(slot.pty, msg);
+        safeWrite(slot.pty, msg.replace(/\n/g, '\r'));
       }
     });
 
@@ -302,7 +322,7 @@ export class PtyManager {
     if (!slot.pty) return false;
     // Write text, then send Enter after a short delay
     // (Claude Code paste mode needs a separate Enter to submit)
-    safeWrite(slot.pty, text);
+    safeWrite(slot.pty, text.replace(/\n/g, '\r'));
     setTimeout(() => {
       safeWrite(slot.pty, '\r');
     }, 100);
@@ -345,6 +365,11 @@ export class PtyManager {
     this.trustMode = !!opts.trustMode;
     this.useWSL = !!opts.useWSL;
     this.suggestMode = opts.suggestMode || 'off';
+    this.logsEnabled = !!opts.logsEnabled;
+    if (this.logsEnabled) {
+      this.logsDir = path.join(this.cwd, 'logs');
+      if (!fs.existsSync(this.logsDir)) fs.mkdirSync(this.logsDir, { recursive: true });
+    }
     this.count = this.noPilot ? workerCount : 1 + workerCount;
 
     log('launch', `engine=${this.engine} workers=${workerCount} noPilot=${this.noPilot} trust=${this.trustMode} cwd=${this.cwd}`);
@@ -353,6 +378,7 @@ export class PtyManager {
     this.slots = Array.from({ length: this.count }, (): Slot => ({
       pty: null, ws: null, startedAt: null,
       chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+      restartCount: 0,
     }));
 
     // Update pilot prompt with correct worker count (only for claude with pilot)
@@ -383,9 +409,12 @@ export class PtyManager {
   }
 
   killAll(): void {
+    const oldAutoRestart = this.autoRestart;
+    this.autoRestart = false;
     for (let i = 0; i < this.slots.length; i++) {
       this.kill(i);
     }
+    this.autoRestart = oldAutoRestart;
     this.killSuggesteur();
   }
 

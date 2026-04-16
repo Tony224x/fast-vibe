@@ -11,6 +11,7 @@ export interface Settings {
   autoFocus: boolean;
   theme: 'dark' | 'light' | 'system';
   suggestMode: 'off' | 'static' | 'ai';
+  logsEnabled: boolean;
   lastCwd?: string;
 }
 
@@ -27,6 +28,7 @@ export interface Slot {
   chunksTotalLen: number;
   joinedCache: string;
   dirty: boolean;
+  restartCount: number;
 }
 
 export interface Suggestion {
@@ -59,6 +61,12 @@ export interface LaunchOptions {
   trustMode?: boolean;
   useWSL?: boolean;
   suggestMode?: 'off' | 'static' | 'ai';
+  logsEnabled?: boolean;
+}
+
+export interface Profile {
+  name: string;
+  settings: Partial<Settings> & { cwd?: string };
 }
 
 export const DEFAULTS: Settings = {
@@ -71,4 +79,5 @@ export const DEFAULTS: Settings = {
   autoFocus: true,
   theme: 'dark',
   suggestMode: 'off',
+  logsEnabled: false,
 };

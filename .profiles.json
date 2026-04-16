@@ -1,0 +1,16 @@
+[
+  {
+    "name": "zero-saisie-6",
+    "settings": {
+      "workers": 6,
+      "previewUrl": "",
+      "engine": "kiro",
+      "noPilot": true,
+      "trustMode": true,
+      "useWSL": false,
+      "autoFocus": true,
+      "suggestMode": "off",
+      "theme": "dark"
+    }
+  }
+]

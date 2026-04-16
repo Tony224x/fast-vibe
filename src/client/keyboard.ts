@@ -1,6 +1,6 @@
-import { launched, noPilot, workerCount, expandedIndex, focusedIndex } from './state';
+import { launched, noPilot, workerCount, expandedIndex, focusedIndex, terminals } from './state';
 import { setFocused, toggleExpand } from './terminal';
-import { toggleTerminalSearch, closeTerminalSearch, searchVisible } from './search';
+import { toggleTerminalSearch, closeTerminalSearch, searchVisible, toggleGlobalSearch } from './search';
 import { toggleZen } from './preview';
 
 export function handleGlobalKeydown(e: KeyboardEvent): void {
@@ -8,6 +8,20 @@ export function handleGlobalKeydown(e: KeyboardEvent): void {
     e.preventDefault();
     if (launched) toggleTerminalSearch(focusedIndex);
     else toggleZen();
+    return;
+  }
+  if (e.ctrlKey && e.shiftKey && e.key === 'G') {
+    e.preventDefault();
+    if (launched) toggleGlobalSearch();
+    return;
+  }
+  if (e.ctrlKey && e.shiftKey && e.key === 'S') {
+    e.preventDefault();
+    const t = terminals[focusedIndex];
+    if (t) {
+      t.followMode = !t.followMode;
+      if (t.followMode) t.term.scrollToBottom();
+    }
     return;
   }
   if (e.ctrlKey && e.shiftKey && e.key === 'B') {

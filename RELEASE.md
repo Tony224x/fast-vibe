@@ -1,3 +1,32 @@
+# v2.0.1
+
+_13 avril 2026_
+
+## ✨ Features
+
+- **Bouton Verify (simplify-style)** — Remplace le simple prompt de vérification par une revue en 3 phases inspirée de `/simplify` :
+  - Phase 1 : `git diff` pour identifier les changements
+  - Phase 2 : 3 sub-agents parallèles (réutilisation, qualité, efficacité)
+  - Phase 3 : agrégation des findings et correction automatique
+  - Prompt engine-agnostic (fonctionne avec Claude Code et Kiro CLI)
+
+- **Scroll-to-bottom sur tous les terminaux** — Bouton flottant sur chaque pane pour revenir en bas du terminal, avec gestion correcte du stacking context (`isolation: isolate`)
+
+## 🐛 Fixes
+
+- **Erreurs d'écriture settings loguées** — Les erreurs d'écriture du fichier settings sont maintenant loguées au lieu d'être silencieusement ignorées
+
+## 🔧 Chore
+
+- Bump version `2.0.0` → `2.0.1`
+
+## 📁 Fichiers impactés
+
+`public/index.html`, `public/style.css`, `src/client/app.ts`, `src/client/session.ts`, `src/client/terminal.ts`, `src/client/ui-helpers.ts`, `src/client/xterm.d.ts`, `src/server.ts`, `package.json`
+
+---
+
+
 # v2.0.0 — "The Great Migration"
 
 > Full JavaScript → TypeScript migration. Zéro feature perdue, zéro régression, type safety partout.

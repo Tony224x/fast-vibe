@@ -47,6 +47,7 @@
             </span>
             <span class="pane-actions">
               <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" title="Send code review prompt">&#10003; Verify</button>
+              <button class="btn-pane-action" data-action="copy" data-index="0" title="Copy output">&#128203;</button>
               <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
               <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
               <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
@@ -165,6 +166,14 @@
         <label for="setting-preview-url">Preview URL</label>
         <input type="text" id="setting-preview-url" placeholder="http://localhost:3000">
         <span class="setting-hint">Auto-open preview with this URL on Start</span>
+      </div>
+      <div class="setting-row setting-profiles">
+        <label>Profiles</label>
+        <div id="profiles-list"></div>
+        <div class="profiles-actions">
+          <input type="text" id="profile-name" placeholder="Profile name...">
+          <button id="btn-profile-save">Save Profile</button>
+        </div>
       </div>
       <div class="setting-actions">
         <button id="btn-settings-cancel">Cancel</button>

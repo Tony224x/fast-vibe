@@ -8,6 +8,7 @@ export interface TerminalEntry {
   lastBodyH?: number;
   lastCols?: number;
   lastRows?: number;
+  followMode: boolean;
 }
 
 export let workerCount = 4;
@@ -26,6 +27,7 @@ export let launchTimestamp = 0;
 export let previewVisible = false;
 export let lastUserInputAt = 0;
 export let sidebarWidth = 240;
+export let sessionTimerInterval: ReturnType<typeof setInterval> | null = null;
 
 export const terminals: TerminalEntry[] = [];
 export const textDecoder = new TextDecoder();
@@ -48,6 +50,7 @@ const setters = {
   previewVisible:  (v: boolean) => { previewVisible = v; },
   lastUserInputAt: (v: number) => { lastUserInputAt = v; },
   sidebarWidth:    (v: number) => { sidebarWidth = v; },
+  sessionTimerInterval: (v: ReturnType<typeof setInterval> | null) => { sessionTimerInterval = v; },
 } as const;
 
 export type StateKey = keyof typeof setters;

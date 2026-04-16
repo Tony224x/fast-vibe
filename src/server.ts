@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import { exec } from 'child_process';
 import { PtyManager } from './pty-manager';
-import { Settings, Bookmark, DEFAULTS } from './types';
+import { Settings, Bookmark, Profile, DEFAULTS } from './types';
 
 const app = express();
 const server = http.createServer(app);
@@ -75,6 +75,9 @@ app.post('/api/settings', (req: Request, res: Response) => {
   }
   if (req.body.suggestMode != null && ['off', 'static', 'ai'].includes(req.body.suggestMode)) {
     settings.suggestMode = req.body.suggestMode;
+  }
+  if (req.body.logsEnabled != null) {
+    settings.logsEnabled = !!req.body.logsEnabled;
   }
   saveSettings();
   res.json(settings);
@@ -191,22 +194,46 @@ app.get('/api/browse', (req: Request, res: Response) => {
 
 app.post('/api/launch', (req: Request, res: Response) => {
   const cwd = req.body.cwd || process.cwd();
+  if (!fs.existsSync(cwd)) {
+    return res.status(400).json({ error: `Directory does not exist: ${cwd}` });
+  }
   const workers = req.body.workers || settings.workers;
   settings.workers = workers;
   settings.lastCwd = cwd;
   saveSettings();
-  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL, suggestMode: settings.suggestMode });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL, suggestMode: settings.suggestMode, logsEnabled: settings.logsEnabled });
   res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
 });
 
-app.post('/api/stop', (_req: Request, res: Response) => {
-  ptyManager.killAll();
+app.post('/api/stop', async (_req: Request, res: Response) => {
+  await ptyManager.killAll();
   res.json({ ok: true });
 });
 
 // ── Terminal control ──
 
+// ── Rate limiter for terminal send ──
+
+const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimitMap) {
+    if (entry.resetAt < now) rateLimitMap.delete(ip);
+  }
+}, 60_000);
+
 app.post('/api/terminal/:id/send', (req: Request, res: Response) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = rateLimitMap.get(ip);
+  if (!entry || entry.resetAt < now) {
+    entry = { count: 0, resetAt: now + 60_000 };
+    rateLimitMap.set(ip, entry);
+  }
+  entry.count++;
+  if (entry.count > 60) {
+    return res.status(429).json({ error: 'Rate limit exceeded. 60 requests per minute.' });
+  }
   const id = parseInt(req.params.id as string, 10);
   const text = req.body.text;
   if (!text) {
@@ -258,6 +285,78 @@ app.post('/api/suggest/:workerId/dismiss', (req: Request, res: Response) => {
   const workerId = parseInt(req.params.workerId as string, 10);
   ptyManager.dismissSuggestion(workerId);
   res.json({ ok: true });
+});
+
+// ── Batch compact/clear ──
+
+app.post('/api/batch/compact', (_req: Request, res: Response) => {
+  const results = ptyManager.getStatus().filter(t => t.alive).map(t => ({
+    terminal: t.id, ok: ptyManager.sendCommand(t.id, '/compact'),
+  }));
+  res.json({ ok: true, results });
+});
+
+app.post('/api/batch/clear', (_req: Request, res: Response) => {
+  const results = ptyManager.getStatus().filter(t => t.alive).map(t => ({
+    terminal: t.id, ok: ptyManager.sendCommand(t.id, '/clear'),
+  }));
+  res.json({ ok: true, results });
+});
+
+// ── Profiles API ──
+
+const PROFILES_FILE = path.join(__dirname, '..', '.profiles.json');
+let profilesCache: Profile[] | null = null;
+
+function loadProfiles(): Profile[] {
+  if (profilesCache !== null) return profilesCache;
+  try { profilesCache = JSON.parse(fs.readFileSync(PROFILES_FILE, 'utf8')); }
+  catch { profilesCache = []; }
+  return profilesCache!;
+}
+
+function saveProfiles(profiles: Profile[]): void {
+  profilesCache = profiles;
+  fs.writeFile(PROFILES_FILE, JSON.stringify(profiles, null, 2), () => {});
+}
+
+app.get('/api/profiles', (_req: Request, res: Response) => {
+  res.json(loadProfiles());
+});
+
+app.post('/api/profiles', (req: Request, res: Response) => {
+  const { name, settings: s } = req.body;
+  if (!name) return res.status(400).json({ error: 'Missing name' });
+  const profiles = loadProfiles();
+  const idx = profiles.findIndex(p => p.name === name);
+  const profile: Profile = { name, settings: s || {} };
+  if (idx >= 0) profiles[idx] = profile; else profiles.push(profile);
+  saveProfiles(profiles);
+  res.json(profiles);
+});
+
+app.delete('/api/profiles', (req: Request, res: Response) => {
+  const { name } = req.body;
+  const profiles = loadProfiles().filter(p => p.name !== name);
+  saveProfiles(profiles);
+  res.json(profiles);
+});
+
+// ── Global search API ──
+
+app.get('/api/search', (req: Request, res: Response) => {
+  const q = (req.query.q as string || '').toLowerCase();
+  const last = parseInt(req.query.last as string, 10) || 3000;
+  if (!q) return res.status(400).json({ error: 'Missing q parameter' });
+  const results = ptyManager.getStatus()
+    .filter(t => t.alive)
+    .map(t => {
+      const output = ptyManager.getOutput(t.id, last);
+      if (!output) return null;
+      const matches = output.split('\n').filter(line => line.toLowerCase().includes(q)).slice(0, 10);
+      return matches.length > 0 ? { terminal: t.id, role: t.role, matches } : null;
+    }).filter(Boolean);
+  res.json({ results });
 });
 
 // ── WebSocket ──
@@ -332,9 +431,9 @@ function cleanup(): void {
   server.close();
 }
 
-process.on('SIGINT', () => { cleanup(); process.exit(0); });
-process.on('SIGTERM', () => { cleanup(); process.exit(0); });
-process.on('exit', () => { ptyManager.killAll(); });
+process.on('SIGINT', () => { cleanup(); setTimeout(() => process.exit(0), 3000); });
+process.on('SIGTERM', () => { cleanup(); setTimeout(() => process.exit(0), 3000); });
+process.on('exit', () => { /* killAll already called in cleanup */ });
 
 const PORT = parseInt(process.env.PORT || '3333', 10);
 

@@ -7,6 +7,10 @@ import { getXtermTheme } from './theme';
 import { stripAnsi, postJson, debounce } from './utils';
 import { notifyTaskDone } from './toast';
 
+// ── WebSocket Reconnect Backoff ──
+
+const wsReconnectAttempts: Record<number, number> = {};
+
 // ── Activity Indicator ──
 
 export const receivingTimers: Record<number, ReturnType<typeof setTimeout>> = {};
@@ -122,7 +126,7 @@ export function updatePaneDot(index: number, alive: boolean): void {
 
 // ── Auto-focus on task completion ──
 
-export const DONE_PATTERNS: RegExp[] = [
+const DONE_PATTERNS: RegExp[] = [
   /\u276f\s*$/m,
   /kiro>\s*$/im,
   /\$\s*$/m,
@@ -177,19 +181,26 @@ export function connectWebSocket(index: number, term: InstanceType<typeof Termin
       updateUnreadUI(index, true);
     }
     if (autoFocus && index !== focusedIndex) detectTaskDone(index, data);
+    // Follow mode: auto-scroll to bottom
+    const t = terminals[index];
+    if (t && t.followMode) term.scrollToBottom();
   };
   ws.onopen = () => {
+    wsReconnectAttempts[index] = 0;
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     updatePaneDot(index, true);
   };
   ws.onclose = () => {
     updatePaneDot(index, false);
     if (!launched) return;
+    const attempt = wsReconnectAttempts[index] || 0;
+    const delay = Math.min(1500 * Math.pow(2, attempt), 30000);
+    wsReconnectAttempts[index] = attempt + 1;
     term.write('\r\n\x1b[90m[Reconnecting...]\x1b[0m\r\n');
     setTimeout(() => {
       const t = terminals[index];
       if (t && launched) t.ws = connectWebSocket(index, term);
-    }, 1500);
+    }, delay);
   };
   ws.onerror = () => {};
   return ws;
@@ -221,19 +232,40 @@ export function createTerminal(index: number): void {
   const scrollBtn = document.createElement('button');
   scrollBtn.className = 'btn-scroll-bottom hidden';
   scrollBtn.innerHTML = '&#8595;';
-  scrollBtn.title = 'Scroll to bottom';
-  scrollBtn.addEventListener('click', () => { term.scrollToBottom(); });
+  scrollBtn.title = 'Scroll to bottom (re-enables follow mode)';
+  scrollBtn.addEventListener('click', () => {
+    const t = terminals[index];
+    if (t) t.followMode = true;
+    term.scrollToBottom();
+    scrollBtn.classList.add('hidden');
+  });
   container.appendChild(scrollBtn);
 
   term.onScroll(() => {
     const atBottom = term.buffer.active.viewportY >= term.buffer.active.baseY;
-    scrollBtn.classList.toggle('hidden', atBottom);
+    const t = terminals[index];
+    if (t) {
+      if (atBottom) {
+        t.followMode = true;
+        scrollBtn.classList.add('hidden');
+      } else {
+        t.followMode = false;
+        scrollBtn.classList.remove('hidden');
+      }
+    }
   });
 
-  // Let Ctrl+1-8 and Ctrl+[/] bubble to document handler instead of being eaten by xterm
+  // Let Ctrl+1-8, Ctrl+[/], Ctrl+Shift+S, Ctrl+Shift+G bubble to document handler
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '8') return false;
     if (e.ctrlKey && !e.shiftKey && (e.key === ']' || e.key === '[')) return false;
+    if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 'G')) return false;
+    // Ctrl+Enter → send literal \n for multiline input (Kiro CLI)
+    if (e.ctrlKey && e.key === 'Enter' && e.type === 'keydown') {
+      const t = terminals[index];
+      if (t?.ws?.readyState === WebSocket.OPEN) t.ws.send(JSON.stringify({ type: 'raw', data: '\n' }));
+      return false;
+    }
     return true;
   });
 
@@ -246,5 +278,5 @@ export function createTerminal(index: number): void {
   });
 
   container.addEventListener('mousedown', () => setFocused(index));
-  terminals[index] = { term, fitAddon, searchAddon, ws, index };
+  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: true };
 }

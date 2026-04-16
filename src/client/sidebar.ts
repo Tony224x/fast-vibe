@@ -2,17 +2,23 @@ import { focusedIndex, noPilot, workerCount, launched, unreadTerminals } from '.
 import { escapeHtml, elapsed, postJson } from './utils';
 import { setFocused, updatePaneDot } from './terminal';
 import { compactTerminal, clearTerminal, inlineConfirm } from './ui-helpers';
+import { showToast } from './toast';
 
 export const miniMapData: Record<number, string> = {};
 
 export let sidebarConfirming = false;
 
-export let tabHidden = false;
+let tabHidden = false;
 document.addEventListener('visibilitychange', () => { tabHidden = document.hidden; });
 
+let lastSidebarHash = '';
+
 export function updateSidebar(statuses: Array<{id: number; pid: number | null; alive: boolean; startedAt: string | null; role: string; suggestion?: {text: string; pending: boolean} | null}>): void {
-  // Don't rebuild if an inline confirm is pending — it would wipe the "Confirm?" state
   if (sidebarConfirming) return;
+
+  const hash = JSON.stringify(statuses) + focusedIndex + Array.from(unreadTerminals).join();
+  if (hash === lastSidebarHash) return;
+  lastSidebarHash = hash;
 
   const html = statuses.map((s, i) => {
     const label = s.role === 'pilot' ? 'Pilot' : (noPilot ? `Worker ${i + 1}` : `Worker ${i}`);
@@ -35,6 +41,9 @@ export function updateSidebar(statuses: Array<{id: number; pid: number | null; a
         <button class="btn-ctx" data-ctx-action="compact" data-index="${i}" title="Compact context">&#8860; compact</button>
         <button class="btn-ctx btn-ctx-danger" data-ctx-action="clear" data-index="${i}" title="Clear context">&#8855; clear</button>
       </div>` : ''}
+      ${s.alive ? `<div class="status-card-send">
+        <input type="text" class="send-input" data-index="${i}" placeholder="Send..." spellcheck="false">
+      </div>` : ''}
       ${s.suggestion ? `<div class="suggest-bar${s.suggestion.pending ? ' pending' : ''}" data-worker="${i}">
         <div class="suggest-text" title="${escapeHtml(s.suggestion.text)}">${escapeHtml(s.suggestion.text)}</div>
         <div class="suggest-actions">
@@ -47,7 +56,10 @@ export function updateSidebar(statuses: Array<{id: number; pid: number | null; a
   }).join('');
 
   const list = document.getElementById('status-list')!;
-  list.innerHTML = html;
+  list.innerHTML = `<div class="batch-actions">
+  <button class="btn-batch" data-batch="compact" title="Compact all">&#8860; Compact All</button>
+  <button class="btn-batch btn-ctx-danger" data-batch="clear" title="Clear all">&#8855; Clear All</button>
+</div>` + html;
   initSidebarDragDrop(list);
 }
 
@@ -117,8 +129,24 @@ export function initSidebarDragDrop(container: HTMLElement): void {
 
 // Event delegation for sidebar actions (survives innerHTML rebuilds)
 export function initSidebarClickDelegation(): void {
-  document.getElementById('status-list')!.addEventListener('click', (e) => {
+  const statusList = document.getElementById('status-list')!;
+  statusList.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
+
+    // Batch actions
+    const batchBtn = target.closest('.btn-batch') as HTMLElement | null;
+    if (batchBtn) {
+      e.stopPropagation();
+      const action = batchBtn.dataset.batch;
+      if (action === 'compact') { postJson('/api/batch/compact'); showToast('Compacting all terminals'); }
+      else if (action === 'clear') {
+        sidebarConfirming = true;
+        inlineConfirm(batchBtn, () => { postJson('/api/batch/clear'); showToast('Clearing all terminals'); sidebarConfirming = false; });
+        setTimeout(() => { sidebarConfirming = false; }, 2200);
+      }
+      return;
+    }
+
     const card = target.closest('.status-card') as HTMLElement | null;
     const btn = target.closest('[data-ctx-action]') as HTMLElement | null;
     const suggestBtn = target.closest('[data-suggest-action]') as HTMLElement | null;
@@ -165,5 +193,19 @@ export function initSidebarClickDelegation(): void {
     } else if (card) {
       setFocused(parseInt(card.dataset.index!, 10));
     }
+  });
+
+  // Send-input keydown delegation
+  statusList.addEventListener('keydown', (e) => {
+    const target = e.target as HTMLElement;
+    if (!target.classList.contains('send-input')) return;
+    if ((e as KeyboardEvent).key !== 'Enter') return;
+    const input = target as HTMLInputElement;
+    const idx = parseInt(input.dataset.index!, 10);
+    const text = input.value.trim();
+    if (!text) return;
+    postJson(`/api/terminal/${idx}/send`, { text });
+    input.value = '';
+    showToast(`Sent to terminal ${idx}`);
   });
 }

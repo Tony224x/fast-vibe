@@ -43,6 +43,13 @@ export async function restartTerminal(id: number): Promise<void> {
   }
 }
 
+export async function copyOutput(id: number): Promise<void> {
+  const res = await fetch(`/api/terminal/${id}/output?last=5000`);
+  const data = await res.json();
+  await navigator.clipboard.writeText(data.output || '');
+  showToast(`Output copied from terminal ${id}`);
+}
+
 const VERIFY_PROMPT = `# Simplify: Code Review and Cleanup
 
 Review all changed files for reuse, quality, and efficiency. Fix any issues found.
@@ -156,9 +163,12 @@ export function initSplitters(container: HTMLElement): void {
       const prevRow = (handle as HTMLElement).previousElementSibling as HTMLElement;
       const nextRow = (handle as HTMLElement).nextElementSibling as HTMLElement;
       if (!prevRow || !nextRow) return;
+      const col = (handle as HTMLElement).parentElement!;
+      const panes = Array.from(col.children).filter(c => c.classList.contains('terminal-pane')) as HTMLElement[];
       const startY = me.clientY;
       const prevH = prevRow.offsetHeight;
       const nextH = nextRow.offsetHeight;
+      const colH = panes.reduce((s, p) => s + p.offsetHeight, 0);
       document.body.classList.add('resizing', 'resizing-row');
       (handle as HTMLElement).classList.add('dragging');
 
@@ -167,9 +177,8 @@ export function initSplitters(container: HTMLElement): void {
         const dy = me.clientY - startY;
         const newPrev = Math.max(60, prevH + dy);
         const newNext = Math.max(60, nextH - dy);
-        const total = newPrev + newNext;
-        prevRow.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
-        nextRow.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
+        prevRow.style.flex = `0 0 ${(newPrev / colH * 100).toFixed(1)}%`;
+        nextRow.style.flex = `0 0 ${(newNext / colH * 100).toFixed(1)}%`;
         fitAllRAF();
       }
       function onUp() {
