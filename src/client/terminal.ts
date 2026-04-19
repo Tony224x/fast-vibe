@@ -1,5 +1,5 @@
 import {
-  setState, terminals, focusedIndex, unreadTerminals, autoFocus,
+  setState, terminals, focusedIndex, unreadTerminals, autoFocus, autoFollow,
   noPilot, workerCount, launched, launchTimestamp, suggestMode,
   lastUserInputAt, expandedIndex, textDecoder, TerminalEntry,
 } from './state';
@@ -181,9 +181,9 @@ export function connectWebSocket(index: number, term: InstanceType<typeof Termin
       updateUnreadUI(index, true);
     }
     if (autoFocus && index !== focusedIndex) detectTaskDone(index, data);
-    // Follow mode: auto-scroll to bottom
+    // Follow mode: auto-scroll to bottom (only if globally enabled)
     const t = terminals[index];
-    if (t && t.followMode) term.scrollToBottom();
+    if (t && autoFollow && t.followMode) term.scrollToBottom();
   };
   ws.onopen = () => {
     wsReconnectAttempts[index] = 0;
@@ -278,5 +278,5 @@ export function createTerminal(index: number): void {
   });
 
   container.addEventListener('mousedown', () => setFocused(index));
-  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: true };
+  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: autoFollow };
 }

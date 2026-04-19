@@ -1,4 +1,4 @@
-import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, suggestMode, theme, setState } from './state';
+import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, autoFollow, suggestMode, theme, setState } from './state';
 import { postJson, deleteJson, escapeHtml } from './utils';
 import { applyTheme } from './theme';
 import { showToast } from './toast';
@@ -11,6 +11,7 @@ export function openSettings(): void {
   (document.getElementById('setting-trust-mode') as HTMLInputElement).checked = trustMode;
   (document.getElementById('setting-use-wsl') as HTMLInputElement).checked = useWSL;
   (document.getElementById('setting-auto-focus') as HTMLInputElement).checked = autoFocus;
+  (document.getElementById('setting-auto-follow') as HTMLInputElement).checked = autoFollow;
   (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = suggestMode;
   (document.getElementById('setting-theme') as HTMLSelectElement).value = theme;
   document.getElementById('settings-overlay')!.classList.remove('hidden');
@@ -29,6 +30,7 @@ export async function saveSettings(): Promise<void> {
   const newTrustMode = (document.getElementById('setting-trust-mode') as HTMLInputElement).checked;
   const newUseWSL = (document.getElementById('setting-use-wsl') as HTMLInputElement).checked;
   const newAutoFocus = (document.getElementById('setting-auto-focus') as HTMLInputElement).checked;
+  const newAutoFollow = (document.getElementById('setting-auto-follow') as HTMLInputElement).checked;
   const newSuggestMode = (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value;
   const newTheme = (document.getElementById('setting-theme') as HTMLSelectElement).value;
 
@@ -39,6 +41,7 @@ export async function saveSettings(): Promise<void> {
   setState('trustMode', newTrustMode);
   setState('useWSL', newUseWSL);
   setState('autoFocus', newAutoFocus);
+  setState('autoFollow', newAutoFollow);
   setState('suggestMode', newSuggestMode);
   setState('theme', newTheme);
 
@@ -46,7 +49,8 @@ export async function saveSettings(): Promise<void> {
   await postJson('/api/settings', {
     workers: newWorkerCount, previewUrl: newPreviewUrl, engine: newEngine,
     noPilot: newNoPilot, trustMode: newTrustMode, useWSL: newUseWSL,
-    autoFocus: newAutoFocus, suggestMode: newSuggestMode, theme: newTheme,
+    autoFocus: newAutoFocus, autoFollow: newAutoFollow,
+    suggestMode: newSuggestMode, theme: newTheme,
   });
 
   closeSettings();
@@ -86,6 +90,7 @@ export async function saveProfile(): Promise<void> {
     trustMode: (document.getElementById('setting-trust-mode') as HTMLInputElement).checked,
     useWSL: (document.getElementById('setting-use-wsl') as HTMLInputElement).checked,
     autoFocus: (document.getElementById('setting-auto-focus') as HTMLInputElement).checked,
+    autoFollow: (document.getElementById('setting-auto-follow') as HTMLInputElement).checked,
     suggestMode: (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value,
     theme: (document.getElementById('setting-theme') as HTMLSelectElement).value,
   };
@@ -106,6 +111,7 @@ export async function loadProfile(name: string): Promise<void> {
   if (s.trustMode != null) { setState('trustMode', s.trustMode as boolean); (document.getElementById('setting-trust-mode') as HTMLInputElement).checked = s.trustMode as boolean; }
   if (s.useWSL != null) { setState('useWSL', s.useWSL as boolean); (document.getElementById('setting-use-wsl') as HTMLInputElement).checked = s.useWSL as boolean; }
   if (s.autoFocus != null) { setState('autoFocus', s.autoFocus as boolean); (document.getElementById('setting-auto-focus') as HTMLInputElement).checked = s.autoFocus as boolean; }
+  if (s.autoFollow != null) { setState('autoFollow', s.autoFollow as boolean); (document.getElementById('setting-auto-follow') as HTMLInputElement).checked = s.autoFollow as boolean; }
   if (s.suggestMode != null) { setState('suggestMode', s.suggestMode as string); (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = s.suggestMode as string; }
   if (s.theme != null) { setState('theme', s.theme as string); (document.getElementById('setting-theme') as HTMLSelectElement).value = s.theme as string; applyTheme(); }
   // Persist to server so settings survive reload

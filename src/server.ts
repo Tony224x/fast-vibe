@@ -70,6 +70,9 @@ app.post('/api/settings', (req: Request, res: Response) => {
   if (req.body.autoFocus != null) {
     settings.autoFocus = !!req.body.autoFocus;
   }
+  if (req.body.autoFollow != null) {
+    settings.autoFollow = !!req.body.autoFollow;
+  }
   if (req.body.theme != null && ['dark', 'light', 'system'].includes(req.body.theme)) {
     settings.theme = req.body.theme;
   }

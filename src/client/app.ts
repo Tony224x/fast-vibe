@@ -24,6 +24,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setState('useWSL', !!s.useWSL);
     if (s.lastCwd) (document.getElementById('cwd-input') as HTMLInputElement).value = s.lastCwd;
     setState('autoFocus', s.autoFocus !== false);
+    setState('autoFollow', !!s.autoFollow);
     setState('suggestMode', s.suggestMode || 'off');
     setState('theme', s.theme || 'dark');
     applyTheme();

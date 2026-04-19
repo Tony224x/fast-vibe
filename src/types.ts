@@ -9,6 +9,7 @@ export interface Settings {
   trustMode: boolean;
   useWSL: boolean;
   autoFocus: boolean;
+  autoFollow: boolean;
   theme: 'dark' | 'light' | 'system';
   suggestMode: 'off' | 'static' | 'ai';
   logsEnabled: boolean;
@@ -77,6 +78,7 @@ export const DEFAULTS: Settings = {
   trustMode: false,
   useWSL: false,
   autoFocus: true,
+  autoFollow: false,
   theme: 'dark',
   suggestMode: 'off',
   logsEnabled: false,

@@ -18,6 +18,7 @@ export let noPilot = false;
 export let trustMode = false;
 export let useWSL = false;
 export let autoFocus = true;
+export let autoFollow = false;
 export let theme = 'dark';
 export let suggestMode = 'off';
 export let expandedIndex = -1;
@@ -41,6 +42,7 @@ const setters = {
   trustMode:       (v: boolean) => { trustMode = v; },
   useWSL:          (v: boolean) => { useWSL = v; },
   autoFocus:       (v: boolean) => { autoFocus = v; },
+  autoFollow:      (v: boolean) => { autoFollow = v; },
   theme:           (v: string) => { theme = v; },
   suggestMode:     (v: string) => { suggestMode = v; },
   expandedIndex:   (v: number) => { expandedIndex = v; },
