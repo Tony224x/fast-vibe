@@ -4,6 +4,7 @@ node_modules/
 .pilot-prompt.md
 .settings.json
 .bookmarks.json
+.profiles.json
 coverage/
 .playwright-mcp/
 docs/superpowers/
