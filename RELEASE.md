@@ -1,3 +1,20 @@
+# v3.0.1
+
+_29 avril 2026_
+
+## 🐛 Fixes
+
+- **Refit des terminaux après changement de space / ungroup** — `rerender()` reconstruisait le DOM via `renderLayout` mais n'appelait jamais `fitAll`, donc les canvas xterm restaient à la taille du space précédent jusqu'à ce qu'un autre événement force un refit. Le cache `lastBodyW/H` devenait également stale entre deux relocations DOM, ce qui pouvait court-circuiter un resize de splitter ultérieur.
+  - Ajout de `invalidateFitCache()` dans `terminal.ts`
+  - Appel `invalidateFitCache()` + `requestAnimationFrame(fitAll)` depuis `rerender()` dans `sidebar.ts`
+
+## 📁 Fichiers impactés
+
+`src/client/sidebar.ts`, `src/client/terminal.ts`, `package.json`, `package-lock.json`
+
+---
+
+
 # v2.0.1
 
 _13 avril 2026_
