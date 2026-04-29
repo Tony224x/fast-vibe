@@ -1,9 +1,38 @@
 import { terminals, noPilot, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState, sessionTimerInterval, launchTimestamp } from './state';
-import { postJson } from './utils';
-import { createTerminal, setFocused, scheduleFitAll, termActivity, receivingTimers } from './terminal';
-import { togglePreview, loadPreview } from './preview';
+import { postJson, debounce } from './utils';
+import { createTerminal, setFocused, scheduleFitAll, fitAll, termActivity, receivingTimers } from './terminal';
+import { togglePreview, loadPreview, toggleZen } from './preview';
 import { initSplitters } from './ui-helpers';
 import { renderWelcomeProjects } from './bookmarks';
+import { ICONS } from './icons';
+import { buildDefaultLayout, renderLayout, setLayout, getLayout, initLayoutDnd, collectPanes, captureSizes, LayoutNode } from './layout';
+
+function paneHeader(label: string, index: number, isPilot: boolean): string {
+  const deleteBtn = isPilot ? '' : `<button class="btn-pane-action btn-ctx-danger" data-action="delete" data-index="${index}" data-tooltip="Delete worker" title="Delete">${ICONS.trash}</button>`;
+  return `
+    <div class="terminal-pane ${isPilot ? 'pilot' : 'worker'}" data-index="${index}"${isPilot ? '' : ' style="flex:1"'}>
+      <div class="pane-header">
+        <span class="pane-title">${label}<span class="unread-dot"></span></span>
+        <span class="pane-status">
+          <span class="status-dot"></span>
+          <span class="status-text">--</span>
+        </span>
+        <span class="pane-actions">
+          <span class="pane-actions-overflow">
+            <button class="btn-pane-action btn-verify" data-action="verify" data-index="${index}" data-tooltip="Verify (code review)" title="Verify">${ICONS.check}<span>Verify</span></button>
+            <button class="btn-pane-action" data-action="copy" data-index="${index}" data-tooltip="Copy output" title="Copy">${ICONS.copy}</button>
+            <button class="btn-pane-action" data-action="compact" data-index="${index}" data-tooltip="Compact context" title="Compact">${ICONS.layers}</button>
+            <button class="btn-pane-action" data-action="clear" data-index="${index}" data-tooltip="Clear context" title="Clear">${ICONS.eraser}</button>
+            <button class="btn-pane-action" data-action="restart" data-index="${index}" data-tooltip="Restart" title="Restart">${ICONS.refresh}</button>
+          </span>
+          <button class="btn-pane-action btn-overflow-toggle" data-action="overflow-toggle" data-index="${index}" data-tooltip="More actions" title="More">${ICONS.moreHorizontal}</button>
+          ${deleteBtn}
+        </span>
+        <button class="btn-expand" data-index="${index}" data-tooltip="Expand / Collapse" title="Expand">${ICONS.expand}</button>
+      </div>
+      <div class="pane-body" id="term-${index}"></div>
+    </div>`;
+}
 
 export async function launchSession(): Promise<void> {
   const cwdInput = document.getElementById('cwd-input') as HTMLInputElement;
@@ -22,8 +51,8 @@ export async function launchSession(): Promise<void> {
 
   await postJson('/api/launch', { cwd, workers: workerCount });
 
-  // Build worker panes dynamically
-  buildWorkerPanes(workerCount);
+  // Build worker panes dynamically (loads persisted layout if compatible)
+  await buildWorkerPanes(workerCount);
 
   // Hide/show pilot pane based on noPilot mode
   const pilotPane = document.querySelector('.terminal-pane.pilot');
@@ -36,25 +65,7 @@ export async function launchSession(): Promise<void> {
     // Re-add pilot pane if it was removed in a previous noPilot session
     const grid = document.getElementById('workers-grid')!;
     if (!document.querySelector('.terminal-pane.pilot')) {
-      grid.insertAdjacentHTML('beforebegin', `
-        <div class="terminal-pane pilot" data-index="0">
-          <div class="pane-header">
-            <span class="pane-title">Pilot<span class="unread-dot"></span></span>
-            <span class="pane-status">
-              <span class="status-dot"></span>
-              <span class="status-text">--</span>
-            </span>
-            <span class="pane-actions">
-              <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" title="Send code review prompt">&#10003; Verify</button>
-              <button class="btn-pane-action" data-action="copy" data-index="0" title="Copy output">&#128203;</button>
-              <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
-              <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
-              <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
-            </span>
-            <button class="btn-expand" data-index="0" title="Expand / Collapse">&#9974;</button>
-          </div>
-          <div class="pane-body" id="term-0"></div>
-        </div>`);
+      grid.insertAdjacentHTML('beforebegin', paneHeader('Pilot', 0, true));
     }
   }
 
@@ -89,6 +100,10 @@ export async function launchSession(): Promise<void> {
 
   setFocused(noPilot ? 0 : 0);
   scheduleFitAll(100);
+
+  // Default to zen mode on launch (hide launchbar + sidebar) if not already in zen
+  const appEl = document.getElementById('app')!;
+  if (!appEl.classList.contains('launchbar-hidden')) toggleZen();
 
   // Auto-open preview if URL is set
   if (previewUrl) {
@@ -136,49 +151,51 @@ export function destroyTerminals(): void {
   }
 }
 
-export function buildWorkerPanes(count: number): void {
+export async function buildWorkerPanes(count: number): Promise<void> {
   const grid = document.getElementById('workers-grid') as HTMLElement;
   grid.innerHTML = '';
   grid.style.gridTemplateColumns = '';
   grid.className = 'workers-flex';
 
   const startIdx = noPilot ? 0 : 1;
-  const cols = count <= 2 ? count : 2;
-  const rows = Math.ceil(count / cols);
+  const indices = Array.from({ length: count }, (_, i) => startIdx + i);
+  const wantSet = new Set(indices);
 
-  for (let c = 0; c < cols; c++) {
-    if (c > 0) grid.insertAdjacentHTML('beforeend', '<div class="split-v"></div>');
-    const col = document.createElement('div');
-    col.className = 'worker-col';
-    for (let r = 0; r < rows; r++) {
-      const idx = r * cols + c;
-      if (idx >= count) break;
-      if (r > 0) col.insertAdjacentHTML('beforeend', '<div class="split-h"></div>');
-      const i = startIdx + idx;
-      const label = noPilot ? `Worker ${i + 1}` : `Worker ${i}`;
-      col.insertAdjacentHTML('beforeend', `
-        <div class="terminal-pane worker" data-index="${i}" style="flex:1">
-          <div class="pane-header">
-            <span class="pane-title">${label}<span class="unread-dot"></span></span>
-            <span class="pane-status">
-              <span class="status-dot"></span>
-              <span class="status-text">--</span>
-            </span>
-            <span class="pane-actions">
-              <button class="btn-pane-action btn-verify" data-action="verify" data-index="${i}" title="Send code review prompt">&#10003; Verify</button>
-              <button class="btn-pane-action" data-action="copy" data-index="${i}" title="Copy output">&#128203;</button>
-              <button class="btn-pane-action" data-action="compact" data-index="${i}" title="Compact">&#8860;</button>
-              <button class="btn-pane-action" data-action="clear" data-index="${i}" title="Clear">&#8855;</button>
-              <button class="btn-pane-action" data-action="restart" data-index="${i}" title="Restart">&#8635;</button>
-            </span>
-            <button class="btn-expand" data-index="${i}" title="Expand / Collapse">&#9974;</button>
-          </div>
-          <div class="pane-body" id="term-${i}"></div>
-        </div>
-      `);
+  let tree: LayoutNode | null = null;
+  try {
+    const r = await fetch('/api/layout');
+    const data = await r.json();
+    if (data.layout) {
+      const have = collectPanes(data.layout);
+      if (have.size === wantSet.size && Array.from(wantSet).every(i => have.has(i))) {
+        tree = data.layout;
+      }
     }
-    grid.appendChild(col);
-  }
+  } catch {}
+  if (!tree) tree = buildDefaultLayout(indices);
+  if (!tree) return;
 
+  setLayout(tree);
+  renderLayout(grid, tree);
   initSplitters(grid);
+
+  const saveLayout = debounce(() => {
+    const t = getLayout();
+    if (!t) return;
+    const captured = captureSizes(grid, t);
+    postJson('/api/layout', { layout: captured });
+  }, 600);
+
+  initLayoutDnd(grid, () => {
+    initSplitters(grid);
+    requestAnimationFrame(() => fitAll());
+    saveLayout();
+  });
+  // Hook for the "+ Worker" button: backend spawns the PTY, layout grafts the
+  // new pane, then we wire up xterm + WS so it becomes interactive.
+  (grid as HTMLElement & { __onPaneSpawned?: (i: number) => void }).__onPaneSpawned = (newIdx: number) => {
+    createTerminal(newIdx);
+    requestAnimationFrame(() => fitAll());
+    saveLayout();
+  };
 }

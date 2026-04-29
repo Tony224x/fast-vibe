@@ -1,5 +1,6 @@
 import { postJson, deleteJson, escapeHtml } from './utils';
 import { launchSession } from './session';
+import { ICONS } from './icons';
 
 export let bookmarks: Array<{path: string; name: string}> = [];
 
@@ -16,7 +17,7 @@ export function updateBookmarkStar(): void {
   const p = (document.getElementById('cwd-input') as HTMLInputElement).value.trim();
   const btn = document.getElementById('btn-bookmark')!;
   const saved = bookmarks.some(b => b.path === p);
-  btn.innerHTML = saved ? '&#9733;' : '&#9734;';
+  btn.innerHTML = saved ? ICONS.starFilled : ICONS.star;
   btn.classList.toggle('saved', saved);
 }
 
@@ -48,7 +49,7 @@ export function renderBookmarks(): void {
     <div class="bm-item" data-path="${escapeHtml(b.path)}">
       <span class="bm-name">${escapeHtml(b.name)}</span>
       <span class="bm-path">${escapeHtml(b.path)}</span>
-      <button class="bm-del" data-del="${escapeHtml(b.path)}" title="Remove">&#10005;</button>
+      <button class="bm-del" data-del="${escapeHtml(b.path)}" title="Remove">${ICONS.x}</button>
     </div>`).join('');
 
   dd.querySelectorAll('.bm-item').forEach(el => {

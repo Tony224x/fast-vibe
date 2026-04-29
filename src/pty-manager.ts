@@ -225,7 +225,7 @@ export class PtyManager {
         }
       } catch { /* WS gone */ }
       // Auto-restart on unexpected exit
-      if (this.autoRestart && exitCode !== 0 && slot.restartCount < 3) {
+      if (this.autoRestart && !slot.removed && exitCode !== 0 && slot.restartCount < 3) {
         slot.restartCount++;
         log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in 3s`);
         setTimeout(() => { this.spawn(index, this.cwd); }, 3000);
@@ -391,6 +391,34 @@ export class PtyManager {
     }
 
     // Suggesteur is spawned on demand (first AI suggestion request), not at launch
+  }
+
+  // Add a single new worker slot at the end and spawn its PTY. Returns the new
+   // index. Workers added this way are independent of the original launchAll
+   // configuration and persist until killAll().
+  addWorker(): number {
+    const newIndex = this.slots.length;
+    this.slots.push({
+      pty: null, ws: null, startedAt: null,
+      chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+      restartCount: 0,
+    });
+    this.count = this.slots.length;
+    this.spawn(newIndex, this.cwd);
+    return newIndex;
+  }
+
+  // Permanently remove a worker. The slot stays in the array as a tombstone so
+  // that indices (and therefore layout pane references) don't shift; subsequent
+  // calls to addWorker continue to push at the end. getStatus filters tombstones
+  // out so the UI sees them as truly gone.
+  removeWorker(index: number): boolean {
+    if (index >= this.slots.length) return false;
+    const slot = this.slots[index];
+    if (slot.removed) return true;
+    slot.removed = true;
+    this.kill(index);
+    return true;
   }
 
   kill(index: number): void {
@@ -642,13 +670,17 @@ export class PtyManager {
   }
 
   getStatus(): TerminalStatus[] {
-    return this.slots.map((slot, i) => ({
-      id: i,
-      pid: slot.pty ? slot.pty.pid : null,
-      alive: !!slot.pty,
-      startedAt: slot.startedAt,
-      role: (i === 0 && !this.noPilot) ? 'pilot' as const : 'worker' as const,
-      suggestion: this.suggestions[i] || null,
-    }));
+    return this.slots
+      .map((slot, i) => ({
+        id: i,
+        pid: slot.pty ? slot.pty.pid : null,
+        alive: !!slot.pty,
+        startedAt: slot.startedAt,
+        role: (i === 0 && !this.noPilot) ? 'pilot' as const : 'worker' as const,
+        suggestion: this.suggestions[i] || null,
+        removed: !!slot.removed,
+      }))
+      .filter(s => !s.removed)
+      .map(({ removed: _r, ...rest }) => rest);
   }
 }

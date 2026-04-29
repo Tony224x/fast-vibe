@@ -5,9 +5,11 @@ node_modules/
 .settings.json
 .bookmarks.json
 .profiles.json
+.layout.json
 coverage/
 .playwright-mcp/
 docs/superpowers/
 dist/
 public/bundle.js
 public/bundle.js.map
+*.png

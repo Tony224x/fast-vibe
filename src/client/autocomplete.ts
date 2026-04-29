@@ -2,6 +2,7 @@ import { escapeHtml, debounce } from './utils';
 import { launchSession } from './session';
 import { updateBookmarkStar } from './bookmarks';
 import { launched } from './state';
+import { ICONS } from './icons';
 
 export function initAutocomplete(input: HTMLInputElement): void {
   const dropdown = document.getElementById('autocomplete')!;
@@ -28,7 +29,7 @@ export function initAutocomplete(input: HTMLInputElement): void {
 
     if (currentDir && parentPath && parentPath !== currentDir) {
       html += `<div class="ac-item ac-parent" data-action="parent" data-path="${escapeHtml(parentPath)}">
-        <span class="ac-icon">&#8617;</span>
+        <span class="ac-icon">${ICONS.cornerUpLeft}</span>
         <span class="ac-name">..</span>
         <span class="ac-path">${escapeHtml(parentPath)}</span>
       </div>`;
@@ -36,7 +37,7 @@ export function initAutocomplete(input: HTMLInputElement): void {
 
     if (currentDir) {
       html += `<div class="ac-item ac-current" data-action="select" data-path="${escapeHtml(currentDir)}">
-        <span class="ac-icon">&#10003;</span>
+        <span class="ac-icon">${ICONS.check}</span>
         <span class="ac-name">Select this folder</span>
         <span class="ac-path">${escapeHtml(currentDir)}</span>
       </div>`;
@@ -44,14 +45,14 @@ export function initAutocomplete(input: HTMLInputElement): void {
 
     html += items.map((item, i) => `
       <div class="ac-item ${i === selectedIdx ? 'selected' : ''}" data-action="enter" data-index="${i}">
-        <span class="ac-icon">\u{1F4C1}</span>
+        <span class="ac-icon">${ICONS.folder}</span>
         <span class="ac-name">${escapeHtml(item.name)}</span>
         <span class="ac-path">${escapeHtml(item.path)}</span>
       </div>
     `).join('');
 
     if (!items.length && currentDir) {
-      html += `<div class="ac-item ac-empty"><span class="ac-icon">&#8709;</span><span class="ac-name">No subdirectories</span></div>`;
+      html += `<div class="ac-item ac-empty"><span class="ac-icon">${ICONS.empty}</span><span class="ac-name">No subdirectories</span></div>`;
     }
 
     dropdown.innerHTML = html;

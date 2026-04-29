@@ -1,11 +1,15 @@
-import { focusedIndex, noPilot, workerCount, launched, unreadTerminals } from './state';
-import { escapeHtml, elapsed, postJson } from './utils';
-import { setFocused, updatePaneDot } from './terminal';
-import { compactTerminal, clearTerminal, inlineConfirm } from './ui-helpers';
+import { activeSpace, launched } from './state';
+import { escapeHtml, postJson } from './utils';
+import { createTerminal, updatePaneDot, fitAll } from './terminal';
 import { showToast } from './toast';
+import { ICONS } from './icons';
+import { initSplitters } from './ui-helpers';
+import {
+  addPaneToActiveSpace, collectPanes, findGroupPanes, getLayout,
+  listGroups, rebalanceLayout, renderLayout, setActiveSpace, setLayout, ungroup,
+} from './layout';
 
 export const miniMapData: Record<number, string> = {};
-
 export let sidebarConfirming = false;
 
 let tabHidden = false;
@@ -13,54 +17,60 @@ document.addEventListener('visibilitychange', () => { tabHidden = document.hidde
 
 let lastSidebarHash = '';
 
-export function updateSidebar(statuses: Array<{id: number; pid: number | null; alive: boolean; startedAt: string | null; role: string; suggestion?: {text: string; pending: boolean} | null}>): void {
+// Render the Spaces list (Default + each group). Worker status indicators
+// remain visible inside each pane-header — the sidebar is now a navigation
+// surface across spaces, not a per-worker dashboard.
+export function updateSidebar(statuses: Array<{id: number; alive: boolean}>): void {
   if (sidebarConfirming) return;
 
-  const hash = JSON.stringify(statuses) + focusedIndex + Array.from(unreadTerminals).join();
+  const tree = getLayout();
+  const groups = listGroups(tree);
+  const aliveCount = statuses.filter(s => s.alive).length;
+
+  const inGroupSet = new Set<number>();
+  groups.forEach(g => collectPanes(g).forEach(i => inGroupSet.add(i)));
+  const defaultCount = statuses.filter(s => !inGroupSet.has(s.id)).length;
+
+  const hash = `${activeSpace}|${aliveCount}|${defaultCount}|` + groups.map(g => `${g.id}:${g.name}:${collectPanes(g).size}`).join(',');
   if (hash === lastSidebarHash) return;
   lastSidebarHash = hash;
 
-  const html = statuses.map((s, i) => {
-    const label = s.role === 'pilot' ? 'Pilot' : (noPilot ? `Worker ${i + 1}` : `Worker ${i}`);
-    const pid = Number.isFinite(s.pid) ? s.pid : '-';
-    const elapsedStr = s.alive ? escapeHtml(elapsed(s.startedAt)) : 'stopped';
-    const isUnread = unreadTerminals.has(i) ? ' has-unread' : '';
-    const miniPreview = miniMapData[i] ? `<div class="status-card-preview">${escapeHtml(miniMapData[i])}</div>` : '';
-    return `
-    <div class="status-card ${i === focusedIndex ? 'active' : ''} ${s.role === 'pilot' ? 'pilot-card' : ''}${isUnread}"
-         data-index="${i}" draggable="true">
-      <div class="status-card-header">
-        <span class="status-dot ${s.alive ? 'alive' : 'dead'}"></span>
-        <strong>${escapeHtml(label)}</strong>
-      </div>
-      <div class="status-card-info">
-        PID: ${pid} &middot; ${elapsedStr}
-      </div>
-      ${miniPreview}
-      ${s.alive ? `<div class="status-card-actions">
-        <button class="btn-ctx" data-ctx-action="compact" data-index="${i}" title="Compact context">&#8860; compact</button>
-        <button class="btn-ctx btn-ctx-danger" data-ctx-action="clear" data-index="${i}" title="Clear context">&#8855; clear</button>
-      </div>` : ''}
-      ${s.alive ? `<div class="status-card-send">
-        <input type="text" class="send-input" data-index="${i}" placeholder="Send..." spellcheck="false">
-      </div>` : ''}
-      ${s.suggestion ? `<div class="suggest-bar${s.suggestion.pending ? ' pending' : ''}" data-worker="${i}">
-        <div class="suggest-text" title="${escapeHtml(s.suggestion.text)}">${escapeHtml(s.suggestion.text)}</div>
-        <div class="suggest-actions">
-          <button class="btn-suggest-send" data-suggest-action="send" data-index="${i}">Send</button>
-          <button class="btn-suggest-edit" data-suggest-action="edit" data-index="${i}">Edit</button>
-          <button class="btn-suggest-dismiss" data-suggest-action="dismiss" data-index="${i}">&times;</button>
-        </div>
-      </div>` : ''}
-    </div>`;
-  }).join('');
+  const items: string[] = [];
+  items.push(`
+    <div class="space-card ${activeSpace === 'default' ? 'active' : ''}" data-space="default">
+      <span class="space-card-dot" style="--c: var(--brand)"></span>
+      <span class="space-card-name">Default</span>
+      <span class="space-card-count">${defaultCount}</span>
+      <span class="space-card-actions">
+        <button class="space-card-btn" data-card-action="add-worker" data-space="default" title="Add worker to Default">${ICONS.plus || '+'}</button>
+      </span>
+    </div>`);
+  groups.forEach(g => {
+    items.push(`
+      <div class="space-card ${activeSpace === g.id ? 'active' : ''}" data-space="${g.id}" style="--c: ${g.color}">
+        <span class="space-card-dot"></span>
+        <span class="space-card-name">${escapeHtml(g.name)}</span>
+        <span class="space-card-count">${collectPanes(g).size}</span>
+        <span class="space-card-actions">
+          <button class="space-card-btn" data-card-action="add-worker" data-space="${g.id}" title="Add worker to ${escapeHtml(g.name)}">${ICONS.plus || '+'}</button>
+          <button class="space-card-btn" data-card-action="broadcast" data-space="${g.id}" title="Broadcast to ${escapeHtml(g.name)}">${ICONS.send}</button>
+          <button class="space-card-btn" data-card-action="ungroup" data-space="${g.id}" title="Ungroup ${escapeHtml(g.name)}">${ICONS.x}</button>
+        </span>
+      </div>`);
+  });
 
   const list = document.getElementById('status-list')!;
-  list.innerHTML = `<div class="batch-actions">
-  <button class="btn-batch" data-batch="compact" title="Compact all">&#8860; Compact All</button>
-  <button class="btn-batch btn-ctx-danger" data-batch="clear" title="Clear all">&#8855; Clear All</button>
-</div>` + html;
-  initSidebarDragDrop(list);
+  const activeLabel = activeSpace === 'default'
+    ? 'Default'
+    : (groups.find(g => g.id === activeSpace)?.name || 'Default');
+  list.innerHTML = `<button class="btn-new-worker" data-action="new-worker" title="Add worker to ${escapeHtml(activeLabel)}">
+    ${ICONS.plus}<span>New Worker</span><span class="btn-new-worker-target">${escapeHtml(activeLabel)}</span>
+  </button>
+  <div class="batch-actions">
+    <button class="btn-batch" data-batch="rebalance" title="Equalize all worker sizes">${ICONS.columns}<span>Rebalance</span></button>
+    <button class="btn-batch" data-batch="compact" title="Compact all">${ICONS.layers}<span>Compact All</span></button>
+    <button class="btn-batch btn-ctx-danger" data-batch="clear" title="Clear all">${ICONS.eraser}<span>Clear All</span></button>
+  </div>` + items.join('');
 }
 
 export async function pollStatus(): Promise<void> {
@@ -70,142 +80,128 @@ export async function pollStatus(): Promise<void> {
     const data = await res.json();
     updateSidebar(data.terminals);
     data.terminals.forEach((s: {id: number; alive: boolean}) => updatePaneDot(s.id, s.alive));
-  } catch {}
+  } catch { /* network blip — next tick will retry */ }
 }
 
-export async function pollMiniMap(): Promise<void> {
-  if (!launched || tabHidden) return;
-  const total = noPilot ? workerCount : 1 + workerCount;
-  await Promise.all(Array.from({ length: total }, (_, i) =>
-    fetch(`/api/terminal/${i}/output?last=200`)
-      .then(r => r.json())
-      .then(data => {
-        const lines = (data.output as string).trim().split('\n');
-        miniMapData[i] = lines.slice(-3).join('\n').slice(0, 120);
-      })
-      .catch(() => { miniMapData[i] = ''; })
-  ));
-}
+// Mini-map is no longer rendered, but keep the export so existing callers don't break.
+export async function pollMiniMap(): Promise<void> { /* removed: status lives in pane-headers */ }
 
-export function initSidebarDragDrop(container: HTMLElement): void {
-  const cards = container.querySelectorAll('.status-card');
-  cards.forEach(card => {
-    card.addEventListener('dragstart', (e: Event) => {
-      const de = e as DragEvent;
-      (card as HTMLElement).classList.add('dragging');
-      de.dataTransfer!.setData('text/plain', (card as HTMLElement).dataset.index!);
-      de.dataTransfer!.effectAllowed = 'move';
-    });
-    card.addEventListener('dragend', () => {
-      (card as HTMLElement).classList.remove('dragging');
-      container.querySelectorAll('.status-card').forEach(c => (c as HTMLElement).classList.remove('drag-over'));
-    });
-    card.addEventListener('dragover', (e: Event) => {
-      e.preventDefault();
-      (e as DragEvent).dataTransfer!.dropEffect = 'move';
-      (card as HTMLElement).classList.add('drag-over');
-    });
-    card.addEventListener('dragleave', () => {
-      (card as HTMLElement).classList.remove('drag-over');
-    });
-    card.addEventListener('drop', (e: Event) => {
-      e.preventDefault();
-      (card as HTMLElement).classList.remove('drag-over');
-      const de = e as DragEvent;
-      const fromIdx = de.dataTransfer!.getData('text/plain');
-      const fromCard = container.querySelector(`.status-card[data-index="${fromIdx}"]`);
-      if (fromCard && fromCard !== card) {
-        const rect = (card as HTMLElement).getBoundingClientRect();
-        const midY = rect.top + rect.height / 2;
-        if (de.clientY < midY) {
-          container.insertBefore(fromCard, card);
-        } else {
-          container.insertBefore(fromCard, (card as HTMLElement).nextSibling);
-        }
+// Sidebar click → switch active space, or perform a per-card action.
+// Spawn one worker into the active space, persist the new layout and re-render.
+// Shared between the sidebar `+` buttons and the floating in-view FAB.
+export function spawnWorkerInActiveSpace(targetSpace?: string): void {
+  const grid = document.getElementById('workers-grid') as HTMLElement | null;
+  if (!grid) return;
+  const renderAndWire = (tree: import('./layout').LayoutNode): void => {
+    renderLayout(grid, tree);
+    initSplitters(grid);
+  };
+  const finishRender = (): void => {
+    lastSidebarHash = '';
+    const tree = getLayout();
+    if (tree) renderAndWire(tree);
+    pollStatus();
+  };
+  if (targetSpace && targetSpace !== activeSpace) {
+    setActiveSpace(targetSpace);
+    const tree = getLayout();
+    if (tree) renderAndWire(tree);
+  }
+  postJson('/api/terminal/spawn')
+    .then(r => r.json() as Promise<{ ok: boolean; index: number; error?: string }>)
+    .then((data) => {
+      const idx = data.index;
+      const tree = getLayout();
+      if (typeof idx !== 'number') {
+        showToast(data.error || 'Failed to spawn worker');
+        return;
       }
-    });
-  });
+      setLayout(addPaneToActiveSpace(tree, idx));
+      renderAndWire(getLayout()!);
+      createTerminal(idx);
+      requestAnimationFrame(() => fitAll());
+      postJson('/api/layout', { layout: getLayout() });
+      finishRender();
+    })
+    .catch(() => { showToast('Failed to spawn worker'); });
 }
 
-// Event delegation for sidebar actions (survives innerHTML rebuilds)
 export function initSidebarClickDelegation(): void {
   const statusList = document.getElementById('status-list')!;
+  const grid = document.getElementById('workers-grid') as HTMLElement | null;
+
+  function rerender(): void {
+    lastSidebarHash = '';
+    const tree = getLayout();
+    if (grid && tree) {
+      renderLayout(grid, tree);
+      initSplitters(grid);
+    }
+    pollStatus();
+  }
+
+
   statusList.addEventListener('click', (e) => {
     const target = e.target as HTMLElement;
 
-    // Batch actions
+    const newWorkerBtn = target.closest('.btn-new-worker') as HTMLElement | null;
+    if (newWorkerBtn) {
+      e.stopPropagation();
+      spawnWorkerInActiveSpace();
+      return;
+    }
+
     const batchBtn = target.closest('.btn-batch') as HTMLElement | null;
     if (batchBtn) {
       e.stopPropagation();
       const action = batchBtn.dataset.batch;
       if (action === 'compact') { postJson('/api/batch/compact'); showToast('Compacting all terminals'); }
-      else if (action === 'clear') {
-        sidebarConfirming = true;
-        inlineConfirm(batchBtn, () => { postJson('/api/batch/clear'); showToast('Clearing all terminals'); sidebarConfirming = false; });
-        setTimeout(() => { sidebarConfirming = false; }, 2200);
+      else if (action === 'clear') { postJson('/api/batch/clear'); showToast('Clearing all terminals'); }
+      else if (action === 'rebalance') {
+        const tree = getLayout();
+        if (!tree || !grid) return;
+        const next = rebalanceLayout(tree);
+        setLayout(next);
+        renderLayout(grid, next);
+        initSplitters(grid);
+        postJson('/api/layout', { layout: next });
+        requestAnimationFrame(() => fitAll());
+        showToast('Worker sizes rebalanced');
       }
       return;
     }
 
-    const card = target.closest('.status-card') as HTMLElement | null;
-    const btn = target.closest('[data-ctx-action]') as HTMLElement | null;
-    const suggestBtn = target.closest('[data-suggest-action]') as HTMLElement | null;
-    if (suggestBtn) {
+    // Inline action button on a space card (handled before card-click so the
+    // click doesn't fall through and switch space when the user only meant
+    // to press a tiny action button).
+    const cardBtn = target.closest('.space-card-btn') as HTMLElement | null;
+    if (cardBtn) {
       e.stopPropagation();
-      const idx = parseInt(suggestBtn.dataset.index!, 10);
-      const action = suggestBtn.dataset.suggestAction;
-      if (action === 'send') {
-        const bar = suggestBtn.closest('.suggest-bar')!;
-        const input = bar.querySelector('.suggest-input') as HTMLInputElement | null;
-        const text = input ? input.value : bar.querySelector('.suggest-text')?.textContent;
-        if (text) postJson(`/api/suggest/${idx}/send`, { text });
-      } else if (action === 'edit') {
-        const bar = suggestBtn.closest('.suggest-bar')!;
-        const textEl = bar.querySelector('.suggest-text') as HTMLElement | null;
-        if (textEl && !bar.querySelector('.suggest-input')) {
-          const val = textEl.textContent || '';
-          textEl.innerHTML = `<input class="suggest-input" type="text" value="${escapeHtml(val)}" spellcheck="false">`;
-          const input = textEl.querySelector('.suggest-input') as HTMLInputElement;
-          input.focus();
-          input.select();
-          input.addEventListener('keydown', (ev) => {
-            if (ev.key === 'Enter') {
-              postJson(`/api/suggest/${idx}/send`, { text: input.value });
-            } else if (ev.key === 'Escape') {
-              postJson(`/api/suggest/${idx}/dismiss`);
-            }
-          });
-        }
-      } else if (action === 'dismiss') {
-        postJson(`/api/suggest/${idx}/dismiss`);
+      const action = cardBtn.dataset.cardAction;
+      const space = cardBtn.dataset.space!;
+      if (action === 'add-worker') {
+        spawnWorkerInActiveSpace(space);
+      } else if (action === 'broadcast') {
+        const indices = findGroupPanes(getLayout(), space);
+        const text = window.prompt('Broadcast to group:');
+        if (text) indices.forEach(i => postJson(`/api/terminal/${i}/send`, { text }));
+      } else if (action === 'ungroup') {
+        const tree = getLayout();
+        if (!tree || !grid) return;
+        setLayout(ungroup(tree, space));
+        if (activeSpace === space) setActiveSpace('default');
+        renderLayout(grid, getLayout()!);
+        initSplitters(grid);
+        postJson('/api/layout', { layout: getLayout() });
+        rerender();
       }
-    } else if (btn) {
-      e.stopPropagation();
-      const idx = parseInt(btn.dataset.index!, 10);
-      const action = btn.dataset.ctxAction;
-      if (action === 'compact') compactTerminal(idx);
-      else if (action === 'clear') {
-        sidebarConfirming = true;
-        inlineConfirm(btn, () => { clearTerminal(idx); sidebarConfirming = false; });
-        // Auto-reset if user doesn't confirm within timeout
-        setTimeout(() => { sidebarConfirming = false; }, 2200);
-      }
-    } else if (card) {
-      setFocused(parseInt(card.dataset.index!, 10));
+      return;
     }
-  });
 
-  // Send-input keydown delegation
-  statusList.addEventListener('keydown', (e) => {
-    const target = e.target as HTMLElement;
-    if (!target.classList.contains('send-input')) return;
-    if ((e as KeyboardEvent).key !== 'Enter') return;
-    const input = target as HTMLInputElement;
-    const idx = parseInt(input.dataset.index!, 10);
-    const text = input.value.trim();
-    if (!text) return;
-    postJson(`/api/terminal/${idx}/send`, { text });
-    input.value = '';
-    showToast(`Sent to terminal ${idx}`);
+    const card = target.closest('.space-card') as HTMLElement | null;
+    if (card && card.dataset.space) {
+      setActiveSpace(card.dataset.space);
+      rerender();
+    }
   });
 }

@@ -30,6 +30,7 @@ export interface Slot {
   joinedCache: string;
   dirty: boolean;
   restartCount: number;
+  removed?: boolean;
 }
 
 export interface Suggestion {

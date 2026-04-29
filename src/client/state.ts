@@ -27,8 +27,9 @@ export let launched = false;
 export let launchTimestamp = 0;
 export let previewVisible = false;
 export let lastUserInputAt = 0;
-export let sidebarWidth = 240;
+export let sidebarWidth = 260;
 export let sessionTimerInterval: ReturnType<typeof setInterval> | null = null;
+export let activeSpace: string = 'default';
 
 export const terminals: TerminalEntry[] = [];
 export const textDecoder = new TextDecoder();
@@ -53,6 +54,7 @@ const setters = {
   lastUserInputAt: (v: number) => { lastUserInputAt = v; },
   sidebarWidth:    (v: number) => { sidebarWidth = v; },
   sessionTimerInterval: (v: ReturnType<typeof setInterval> | null) => { sessionTimerInterval = v; },
+  activeSpace:     (v: string) => { activeSpace = v; },
 } as const;
 
 export type StateKey = keyof typeof setters;

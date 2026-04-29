@@ -6,6 +6,7 @@ import {
 import { getXtermTheme } from './theme';
 import { stripAnsi, postJson, debounce } from './utils';
 import { notifyTaskDone } from './toast';
+import { ICONS } from './icons';
 
 // ── WebSocket Reconnect Backoff ──
 
@@ -231,7 +232,7 @@ export function createTerminal(index: number): void {
   // Scroll-to-bottom button
   const scrollBtn = document.createElement('button');
   scrollBtn.className = 'btn-scroll-bottom hidden';
-  scrollBtn.innerHTML = '&#8595;';
+  scrollBtn.innerHTML = ICONS.arrowDown;
   scrollBtn.title = 'Scroll to bottom (re-enables follow mode)';
   scrollBtn.addEventListener('click', () => {
     const t = terminals[index];

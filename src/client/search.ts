@@ -1,6 +1,7 @@
 import { terminals } from './state';
 import { scheduleFitAll, setFocused } from './terminal';
 import { escapeHtml, debounce } from './utils';
+import { ICONS } from './icons';
 
 export let searchVisible = -1;
 
@@ -21,9 +22,9 @@ export function toggleTerminalSearch(index: number): void {
   bar.className = 'search-bar';
   bar.id = 'search-bar-active';
   bar.innerHTML = `<input type="text" placeholder="Search..." spellcheck="false" autocomplete="off">
-    <button data-action="prev" title="Previous">&#9650;</button>
-    <button data-action="next" title="Next">&#9660;</button>
-    <button data-action="close" title="Close">&#10005;</button>`;
+    <button data-action="prev" title="Previous">${ICONS.arrowUp}</button>
+    <button data-action="next" title="Next">${ICONS.arrowDown}</button>
+    <button data-action="close" title="Close">${ICONS.x}</button>`;
   header.after(bar);
 
   const input = bar.querySelector('input')!;
@@ -68,7 +69,7 @@ export function toggleGlobalSearch(): void {
   bar.id = 'global-search-bar';
   bar.className = 'global-search-bar';
   bar.innerHTML = `<input type="text" placeholder="Search all terminals..." spellcheck="false" autocomplete="off">
-    <button data-action="close" title="Close">&#10005;</button>
+    <button data-action="close" title="Close">${ICONS.x}</button>
     <div class="global-search-results"></div>`;
   container.insertBefore(bar, container.firstChild);
 

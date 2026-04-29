@@ -1,6 +1,6 @@
 {
   "name": "fast-vibe",
-  "version": "2.0.1",
+  "version": "3.0.0",
   "description": "Web-based terminal multiplexer for 4 parallel Claude Code sessions",
   "main": "dist/server.js",
   "scripts": {

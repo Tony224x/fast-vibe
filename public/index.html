@@ -5,7 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>fast-vibe</title>
   <link rel="icon" href="/favicon.ico" sizes="256x256" type="image/x-icon">
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=General+Sans:wght@400;500;600;700&family=Outfit:wght@500;600;700;800&display=swap">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous">
   <link rel="stylesheet" href="/style.css">
 </head>
@@ -13,27 +17,38 @@
   <div id="app">
     <div id="main">
       <!-- Launch Bar -->
-      <div id="launch-bar">
+      <header id="launch-bar">
         <div class="launch-left">
           <span class="launch-logo">fast-vibe</span>
         </div>
         <div class="launch-center">
-          <button id="btn-bookmark" data-tooltip="Save bookmark" title="Save bookmark">&#9734;</button>
+          <button id="btn-bookmark" class="icon-btn" data-tooltip="Save bookmark" title="Save bookmark" aria-label="Bookmark current path">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+          </button>
           <div class="bookmark-wrapper">
-            <button id="btn-bookmarks" data-tooltip="Bookmarks" title="Bookmarks">&#9776;</button>
+            <button id="btn-bookmarks" class="icon-btn" data-tooltip="Bookmarks" title="Bookmarks" aria-label="Open bookmarks">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+            </button>
             <div id="bookmarks-dropdown" class="hidden"></div>
           </div>
-          <button id="btn-browse" data-tooltip="Browse folders" title="Browse folders">&#128193;</button>
-          <input type="text" id="cwd-input" placeholder="Project directory..." spellcheck="false" autocomplete="off">
+          <button id="btn-browse" class="icon-btn" data-tooltip="Browse folders" title="Browse folders" aria-label="Browse folders">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          </button>
+          <input type="text" id="cwd-input" placeholder="Project directory…" spellcheck="false" autocomplete="off">
           <div id="autocomplete" class="hidden"></div>
-          <button id="btn-start">Start</button>
-          <button id="btn-stop" class="hidden">Stop</button>
-          <button id="btn-settings" data-tooltip="Settings" title="Settings">&#9881;</button>
+          <button id="btn-start" class="btn-primary" aria-label="Start session">Start</button>
+          <button id="btn-stop" class="btn-danger hidden" aria-label="Stop session">Stop</button>
+          <button id="btn-settings" class="icon-btn" data-tooltip="Settings" title="Settings" aria-label="Open settings">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+          </button>
+          <button id="btn-help" class="icon-btn" data-tooltip="Help (?)" title="Help" aria-label="Open help">
+            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="16" height="16"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </button>
         </div>
         <div class="launch-right">
           <span id="session-info"></span>
         </div>
-      </div>
+      </header>
 
       <!-- Terminals area (hidden until launched) -->
       <div id="terminals" class="hidden">
@@ -46,13 +61,25 @@
               <span class="status-text">--</span>
             </span>
             <span class="pane-actions">
-              <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" title="Send code review prompt">&#10003; Verify</button>
-              <button class="btn-pane-action" data-action="copy" data-index="0" title="Copy output">&#128203;</button>
-              <button class="btn-pane-action" data-action="compact" data-index="0" title="Compact">&#8860;</button>
-              <button class="btn-pane-action" data-action="clear" data-index="0" title="Clear">&#8855;</button>
-              <button class="btn-pane-action" data-action="restart" data-index="0" title="Restart">&#8635;</button>
+              <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" data-tooltip="Verify (code review)" title="Verify">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg><span>Verify</span>
+              </button>
+              <button class="btn-pane-action" data-action="copy" data-index="0" data-tooltip="Copy output" title="Copy">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button class="btn-pane-action" data-action="compact" data-index="0" data-tooltip="Compact context" title="Compact">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>
+              </button>
+              <button class="btn-pane-action" data-action="clear" data-index="0" data-tooltip="Clear context" title="Clear">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M20.49 17.07L13.41 24h-7.83a2 2 0 0 1-1.41-.59L2.59 22a2 2 0 0 1 0-2.82L13.66 8.11a2 2 0 0 1 2.82 0l4 4a2 2 0 0 1 0 2.82z"/><path d="M14 14L7 21"/></svg>
+              </button>
+              <button class="btn-pane-action" data-action="restart" data-index="0" data-tooltip="Restart" title="Restart">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+              </button>
             </span>
-            <button class="btn-expand" data-index="0" title="Expand / Collapse">⛶</button>
+            <button class="btn-expand" data-index="0" data-tooltip="Expand / Collapse" title="Expand">
+              <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>
+            </button>
           </div>
           <div class="pane-body" id="term-0"></div>
         </div>
@@ -65,10 +92,15 @@
       <div id="welcome" class="grid-bg">
         <div class="welcome-content">
           <h1>fast-vibe</h1>
-          <p>1 Pilot + N Workers &mdash; Claude Code &amp; Kiro CLI in parallel</p>
-          <p class="welcome-hint">Enter a project directory above and click <strong>Start</strong></p>
+          <p>1 Pilot · N Workers — Claude Code &amp; Kiro CLI orchestrated in parallel</p>
+          <p class="welcome-hint">Pick a project directory above, or jump back to a recent one</p>
           <div id="welcome-projects"></div>
-          <p class="welcome-hint-keys"><kbd>Ctrl+1-8</kbd> switch terminal &middot; <kbd>Ctrl+Shift+F</kbd> search &middot; <kbd>Ctrl+Shift+B</kbd> broadcast &middot; <kbd>Esc</kbd> close expanded</p>
+          <p class="welcome-hint-keys">
+            <span><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>8</kbd> switch terminal</span>
+            <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> search</span>
+            <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> broadcast</span>
+            <span><kbd>Esc</kbd> exit expanded</span>
+          </p>
         </div>
       </div>
     </div>
@@ -77,9 +109,15 @@
     <div id="preview" class="hidden">
       <div id="preview-header">
         <input type="text" id="preview-url" placeholder="http://localhost:3000" spellcheck="false">
-        <button id="btn-preview-go" title="Load">&#8594;</button>
-        <button id="btn-preview-refresh" title="Refresh">&#8635;</button>
-        <button id="btn-preview-close" title="Close preview">&#10005;</button>
+        <button id="btn-preview-go" title="Load" aria-label="Load URL">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        </button>
+        <button id="btn-preview-refresh" title="Refresh" aria-label="Refresh">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+        </button>
+        <button id="btn-preview-close" title="Close preview" aria-label="Close preview">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
       </div>
       <iframe id="preview-frame" src="about:blank"></iframe>
     </div>
@@ -87,34 +125,39 @@
     <!-- Sidebar resize handle -->
     <div id="sidebar-resize-handle"></div>
     <!-- Sidebar -->
-    <div id="sidebar">
-
+    <aside id="sidebar">
       <div id="sidebar-header">
-        <h2>Status</h2>
+        <h2>Spaces</h2>
         <div id="sidebar-header-actions">
-          <button id="btn-preview-toggle" data-tooltip="Toggle preview" title="Toggle preview">&#9726;</button>
-          <button id="btn-sidebar-hide" data-tooltip="Hide sidebar" title="Hide sidebar">&#10095;</button>
+          <button id="btn-preview-toggle" data-tooltip="Toggle preview" title="Toggle preview" aria-label="Toggle preview">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+          </button>
+          <button id="btn-sidebar-hide" data-tooltip="Hide sidebar" title="Hide sidebar" aria-label="Hide sidebar">
+            <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+          </button>
         </div>
       </div>
       <div id="status-list"></div>
       <!-- Broadcast -->
       <div id="broadcast-bar" class="hidden">
-        <input type="text" id="broadcast-input" placeholder="Broadcast..." spellcheck="false">
-        <button id="btn-broadcast-send" title="Send to all workers">&#9654;</button>
+        <input type="text" id="broadcast-input" placeholder="Broadcast to all workers…" spellcheck="false">
+        <button id="btn-broadcast-send" title="Send to all workers" aria-label="Broadcast send">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
       </div>
-    </div>
+    </aside>
     <!-- Toast container (inside #app for CSS selector compatibility) -->
     <div id="toast-container"></div>
   </div>
 
   <!-- Settings Modal -->
   <div id="settings-overlay" class="hidden">
-    <div id="settings-modal">
-      <h3>Settings</h3>
+    <div id="settings-modal" role="dialog" aria-labelledby="settings-title">
+      <h3 id="settings-title">Settings</h3>
       <div class="setting-row">
         <label for="setting-workers">Workers</label>
         <input type="number" id="setting-workers" min="1" max="8" value="4">
-        <span class="setting-hint">1-8 parallel instances</span>
+        <span class="setting-hint">Number of parallel worker terminals (1–8)</span>
       </div>
       <div class="setting-row">
         <label for="setting-engine">Engine</label>
@@ -125,12 +168,12 @@
         <span class="setting-hint">CLI engine for all terminals</span>
       </div>
       <div class="setting-row">
-        <label for="setting-no-pilot">No Pilot</label>
+        <label for="setting-no-pilot">No pilot</label>
         <input type="checkbox" id="setting-no-pilot">
-        <span class="setting-hint">Workers only, no orchestrator</span>
+        <span class="setting-hint">Run workers only — no orchestrator pane</span>
       </div>
       <div class="setting-row">
-        <label for="setting-trust-mode">Trust Mode</label>
+        <label for="setting-trust-mode">Trust mode</label>
         <input type="checkbox" id="setting-trust-mode">
         <span class="setting-hint">Skip permission prompts (--dangerously-skip-permissions / --trust-all-tools)</span>
       </div>
@@ -151,12 +194,12 @@
       <div class="setting-row">
         <label for="setting-auto-focus">Auto-focus</label>
         <input type="checkbox" id="setting-auto-focus" checked>
-        <span class="setting-hint">Auto-switch to terminal when its task completes</span>
+        <span class="setting-hint">Switch focus to a terminal when its task completes</span>
       </div>
       <div class="setting-row">
-        <label for="setting-auto-follow">Auto-follow output</label>
+        <label for="setting-auto-follow">Auto-follow</label>
         <input type="checkbox" id="setting-auto-follow">
-        <span class="setting-hint">Auto-scroll terminals to bottom on new output (off = stays where you are)</span>
+        <span class="setting-hint">Auto-scroll terminals to bottom on new output</span>
       </div>
       <div class="setting-row">
         <label for="setting-suggest-mode">Auto-suggest</label>
@@ -170,14 +213,14 @@
       <div class="setting-row">
         <label for="setting-preview-url">Preview URL</label>
         <input type="text" id="setting-preview-url" placeholder="http://localhost:3000">
-        <span class="setting-hint">Auto-open preview with this URL on Start</span>
+        <span class="setting-hint">Auto-open this URL in the preview panel on Start</span>
       </div>
       <div class="setting-row setting-profiles">
         <label>Profiles</label>
         <div id="profiles-list"></div>
         <div class="profiles-actions">
-          <input type="text" id="profile-name" placeholder="Profile name...">
-          <button id="btn-profile-save">Save Profile</button>
+          <input type="text" id="profile-name" placeholder="Profile name…">
+          <button id="btn-profile-save">Save profile</button>
         </div>
       </div>
       <div class="setting-actions">
@@ -187,10 +230,61 @@
     </div>
   </div>
 
+  <!-- Help Modal -->
+  <div id="help-overlay" class="hidden">
+    <div id="help-modal" role="dialog" aria-labelledby="help-title">
+      <h3 id="help-title">Quick guide</h3>
+      <div class="help-section">
+        <h4>Layout — drag to split</h4>
+        <ul>
+          <li><b>Drag a pane header</b> onto another pane to see 4 drop zones (top / right / bottom / left) and a center zone.</li>
+          <li>Drop on <b>top / right / bottom / left</b> to split the target in that direction.</li>
+          <li>Drop on the <b>center</b> to stack the panes as tabs — switch with the <b>◄ ►</b> arrows in the header.</li>
+          <li>Drag the splitter bars between panes to resize. Layout is saved automatically.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h4>Groups</h4>
+        <ul>
+          <li><b>Ctrl-click</b> two or more pane headers to multi-select (orange outline appears).</li>
+          <li>A floating <b>Group</b> button appears at the bottom of the screen — click it to wrap the selected panes.</li>
+          <li>The group gets a colored border and dot. <b>Double-click the name</b> to rename it.</li>
+          <li>Group header buttons: <b>collapse</b>, <b>broadcast</b> (send input to all panes in group), <b>ungroup</b>.</li>
+          <li>Selection is only valid if the panes form a contiguous subtree — otherwise the toolbar shakes.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h4>Pane actions</h4>
+        <ul>
+          <li><b>Verify</b> — ask the worker to review its own output.</li>
+          <li><b>Copy</b> — copy current pane output to clipboard.</li>
+          <li><b>Compact</b> / <b>Clear</b> — manage Claude context.</li>
+          <li><b>Restart</b> — relaunch the worker.</li>
+          <li><b>Expand</b> (top-right arrows) — fullscreen the pane.</li>
+        </ul>
+      </div>
+      <div class="help-section">
+        <h4>Shortcuts</h4>
+        <ul>
+          <li><b>Ctrl + Shift + F</b> — toggle Zen mode (hides launch bar + sidebar).</li>
+          <li><b>?</b> — open this help.</li>
+          <li><b>Esc</b> — close modal / clear group selection.</li>
+        </ul>
+      </div>
+      <div class="setting-actions">
+        <button id="btn-help-close">Close</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Zen mode toggle -->
-  <button id="btn-zen" title="Zen mode (Ctrl+Shift+F)">&#9974;</button>
+  <button id="btn-zen" title="Zen mode (Ctrl+Shift+F)" aria-label="Zen mode">
+    <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+  </button>
   <!-- Show sidebar (visible when sidebar is hidden) -->
-  <button id="btn-sidebar-show" class="hidden" title="Show sidebar">&#10094;</button>
+  <button id="btn-sidebar-show" class="hidden" title="Show sidebar" aria-label="Show sidebar">
+    <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+  </button>
 
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js" integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js" integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" crossorigin="anonymous"></script>

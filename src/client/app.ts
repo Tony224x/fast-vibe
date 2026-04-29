@@ -8,7 +8,8 @@ import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } 
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput } from './ui-helpers';
+import { initHelp } from './help';
 import { debounce } from './utils';
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -90,8 +91,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (action === 'compact') compactTerminal(idx);
     else if (action === 'clear') inlineConfirm(btn, () => clearTerminal(idx));
     else if (action === 'restart') restartTerminal(idx);
+    else if (action === 'delete') removeTerminal(idx);
+    else if (action === 'overflow-toggle') {
+      const actions = btn.closest('.pane-actions');
+      if (!actions) return;
+      const wasOpen = actions.classList.contains('overflow-open');
+      document.querySelectorAll('.pane-actions.overflow-open').forEach(el => el.classList.remove('overflow-open'));
+      if (!wasOpen) actions.classList.add('overflow-open');
+    }
     else if (action === 'verify') verifyTerminal(idx);
     else if (action === 'copy') copyOutput(idx);
+  });
+
+  // Close overflow popover on outside click
+  document.addEventListener('click', (e) => {
+    const target = e.target as HTMLElement;
+    if (!target.closest('.pane-actions')) {
+      document.querySelectorAll('.pane-actions.overflow-open').forEach(el => el.classList.remove('overflow-open'));
+    }
   });
 
   // Broadcast
@@ -129,4 +146,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Sidebar click delegation
   initSidebarClickDelegation();
   initProfilesUI();
+  initHelp();
 });

@@ -213,6 +213,26 @@ app.post('/api/stop', async (_req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+app.post('/api/terminal/spawn', (_req: Request, res: Response) => {
+  if (ptyManager.slots.length === 0) {
+    return res.status(400).json({ error: 'No active session — call /api/launch first' });
+  }
+  const index = ptyManager.addWorker();
+  res.json({ ok: true, index });
+});
+
+app.delete('/api/terminal/:id', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id) || id < 0 || id >= ptyManager.slots.length) {
+    return res.status(404).json({ error: 'Terminal not found' });
+  }
+  if (id === 0 && !ptyManager.noPilot) {
+    return res.status(400).json({ error: 'Pilot cannot be removed' });
+  }
+  ptyManager.removeWorker(id);
+  res.json({ ok: true });
+});
+
 // ── Terminal control ──
 
 // ── Rate limiter for terminal send ──
@@ -304,6 +324,35 @@ app.post('/api/batch/clear', (_req: Request, res: Response) => {
     terminal: t.id, ok: ptyManager.sendCommand(t.id, '/clear'),
   }));
   res.json({ ok: true, results });
+});
+
+// ── Layout API ──
+
+const LAYOUT_FILE = path.join(__dirname, '..', '.layout.json');
+
+app.get('/api/layout', (_req: Request, res: Response) => {
+  try {
+    const raw = fs.readFileSync(LAYOUT_FILE, 'utf8');
+    res.json({ layout: JSON.parse(raw) });
+  } catch {
+    res.json({ layout: null });
+  }
+});
+
+app.post('/api/layout', (req: Request, res: Response) => {
+  const layout = req.body?.layout;
+  if (layout === undefined) return res.status(400).json({ error: 'Missing layout' });
+  if (layout === null) {
+    fs.unlink(LAYOUT_FILE, () => res.json({ ok: true, cleared: true }));
+    return;
+  }
+  fs.writeFile(LAYOUT_FILE, JSON.stringify(layout, null, 2), (err) => {
+    if (err) {
+      console.error('[layout] write error:', err.message);
+      return res.status(500).json({ error: err.message });
+    }
+    res.json({ ok: true });
+  });
 });
 
 // ── Profiles API ──

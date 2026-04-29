@@ -2,6 +2,7 @@ import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus,
 import { postJson, deleteJson, escapeHtml } from './utils';
 import { applyTheme } from './theme';
 import { showToast } from './toast';
+import { ICONS } from './icons';
 
 export function openSettings(): void {
   (document.getElementById('setting-workers') as HTMLInputElement).value = String(workerCount);
@@ -71,7 +72,7 @@ export async function loadProfiles(): Promise<void> {
     list.innerHTML = cachedProfiles.map(p =>
       `<div class="profile-item">
         <button class="btn-profile-load" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>
-        <button class="btn-profile-del" data-name="${escapeHtml(p.name)}" title="Delete">&times;</button>
+        <button class="btn-profile-del" data-name="${escapeHtml(p.name)}" title="Delete">${ICONS.x}</button>
       </div>`
     ).join('');
   } catch { list.innerHTML = '<span class="setting-hint">Failed to load profiles</span>'; }

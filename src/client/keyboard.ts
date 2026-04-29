@@ -2,8 +2,15 @@ import { launched, noPilot, workerCount, expandedIndex, focusedIndex, terminals 
 import { setFocused, toggleExpand } from './terminal';
 import { toggleTerminalSearch, closeTerminalSearch, searchVisible, toggleGlobalSearch } from './search';
 import { toggleZen } from './preview';
+import { openHelp, closeHelp, isHelpOpen } from './help';
 
 export function handleGlobalKeydown(e: KeyboardEvent): void {
+  if (e.key === '?' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+    e.preventDefault();
+    if (isHelpOpen()) closeHelp();
+    else openHelp();
+    return;
+  }
   if (e.ctrlKey && e.shiftKey && e.key === 'F') {
     e.preventDefault();
     if (launched) toggleTerminalSearch(focusedIndex);
@@ -30,6 +37,7 @@ export function handleGlobalKeydown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === 'Escape') {
+    if (isHelpOpen()) { closeHelp(); return; }
     if (searchVisible >= 0) { closeTerminalSearch(); return; }
     if (expandedIndex >= 0) { toggleExpand(expandedIndex); return; }
     return;

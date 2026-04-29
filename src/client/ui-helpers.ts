@@ -1,7 +1,9 @@
 import { noPilot, workerCount, terminals, sidebarWidth, setState } from './state';
-import { postJson } from './utils';
+import { postJson, deleteJson } from './utils';
 import { fitAll, fitAllRAF, scheduleFitAll } from './terminal';
 import { showToast } from './toast';
+import { detachPane, findGroupNode, getLayout, setActiveSpace, setLayout, renderLayout, captureSizes } from './layout';
+import { activeSpace } from './state';
 
 export function inlineConfirm(btn: HTMLElement, action: () => void): void {
   const el = btn as HTMLElement & { dataset: DOMStringMap };
@@ -33,6 +35,54 @@ export async function compactTerminal(id: number): Promise<void> {
 export async function clearTerminal(id: number): Promise<void> {
   await postJson(`/api/terminal/${id}/clear`);
   showToast(`Terminal ${id} cleared`);
+}
+
+export async function removeTerminal(id: number): Promise<void> {
+  const res = await deleteJson(`/api/terminal/${id}`);
+  if (!res.ok) {
+    let msg = 'Failed to delete worker';
+    try { const j = await res.json(); if (j.error) msg = j.error; } catch { /* ignore */ }
+    showToast(msg);
+    return;
+  }
+  // Tear down xterm + WebSocket for this slot
+  const t = terminals[id];
+  if (t) {
+    try { if (t.ws) t.ws.close(); } catch { /* ignore */ }
+    try { t.term.dispose(); } catch { /* ignore */ }
+    delete terminals[id];
+  }
+  // Drop the now-orphaned pane-body (xterm DOM is gone, but the empty shell
+  // would otherwise stay in the offscreen store and confuse renderLayout's
+  // pane-body adoption pass on later renders).
+  const orphan = document.getElementById(`term-${id}`);
+  if (orphan) orphan.remove();
+  // Remove the pane from the persisted layout, then re-render. Always go
+  // through renderLayout (even when the resulting tree is null) so the
+  // empty-state placeholder + collapsed-group dock are drawn instead of a
+  // truly blank grid.
+  const grid = document.getElementById('workers-grid') as HTMLElement | null;
+  const tree = getLayout();
+  if (grid && tree) {
+    const captured = captureSizes(grid, tree);
+    const { tree: next } = detachPane(captured, id);
+    setLayout(next);
+    // If the active space was a group and that group disappeared (last pane in
+    // it was removed), fall back to the default space so the user keeps seeing
+    // the remaining workers instead of a "no workers in this group" placeholder.
+    if (next && activeSpace !== 'default' && !findGroupNode(next, activeSpace)) {
+      setActiveSpace('default');
+    }
+    if (next) {
+      renderLayout(grid, next);
+      initSplitters(grid);
+    } else {
+      grid.innerHTML = '<div class="space-empty">No workers left. Click + New Worker to spawn one.</div>';
+    }
+    postJson('/api/layout', { layout: next });
+    requestAnimationFrame(() => fitAll());
+  }
+  showToast(`Worker ${id} removed`);
 }
 
 export async function restartTerminal(id: number): Promise<void> {
@@ -120,33 +170,80 @@ export async function sendBroadcast(): Promise<void> {
   input.value = '';
 }
 
+// Resize tuning
+const PANE_MIN = 120;                              // px floor for prev/next sibling
+const SNAP_POINTS = [25, 33.33, 50, 66.67, 75];    // % of the parent
+const SNAP_THRESHOLD = 2;                          // % distance for magnet
+
+function snap(pct: number): { value: number; snapped: boolean } {
+  for (const s of SNAP_POINTS) {
+    if (Math.abs(pct - s) < SNAP_THRESHOLD) return { value: s, snapped: true };
+  }
+  return { value: pct, snapped: false };
+}
+
+function showResizeLabel(): HTMLDivElement {
+  let el = document.getElementById('resize-label') as HTMLDivElement | null;
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'resize-label';
+    el.className = 'resize-label';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function hideResizeLabel(): void {
+  document.getElementById('resize-label')?.remove();
+}
+
+function resetSiblings(prev: HTMLElement, next: HTMLElement): void {
+  prev.style.flex = '1 1 0';
+  next.style.flex = '1 1 0';
+}
+
 export function initSplitters(container: HTMLElement): void {
   container.querySelectorAll('.split-v').forEach(handle => {
-    handle.addEventListener('mousedown', (e: Event) => {
+    const h = handle as HTMLElement;
+    h.addEventListener('dblclick', () => {
+      const prev = h.previousElementSibling as HTMLElement;
+      const next = h.nextElementSibling as HTMLElement;
+      if (prev && next) { resetSiblings(prev, next); fitAll(); }
+    });
+    h.addEventListener('mousedown', (e: Event) => {
       const me = e as MouseEvent;
       me.preventDefault();
-      const prev = (handle as HTMLElement).previousElementSibling as HTMLElement;
-      const next = (handle as HTMLElement).nextElementSibling as HTMLElement;
+      const prev = h.previousElementSibling as HTMLElement;
+      const next = h.nextElementSibling as HTMLElement;
       if (!prev || !next) return;
       const startX = me.clientX;
       const prevW = prev.offsetWidth;
       const nextW = next.offsetWidth;
+      const total = prevW + nextW;
       document.body.classList.add('resizing', 'resizing-col');
-      (handle as HTMLElement).classList.add('dragging');
+      h.classList.add('dragging');
+      const label = showResizeLabel();
 
       function onMove(e: Event) {
         const me = e as MouseEvent;
         const dx = me.clientX - startX;
-        const newPrev = Math.max(80, prevW + dx);
-        const newNext = Math.max(80, nextW - dx);
-        const total = newPrev + newNext;
-        prev.style.flex = `0 0 ${(newPrev / total * 100).toFixed(1)}%`;
-        next.style.flex = `0 0 ${(newNext / total * 100).toFixed(1)}%`;
+        const rawPrev = Math.max(PANE_MIN, Math.min(total - PANE_MIN, prevW + dx));
+        let pct = (rawPrev / total) * 100;
+        const s = snap(pct);
+        pct = s.value;
+        h.classList.toggle('snapped', s.snapped);
+        prev.style.flex = `0 0 ${pct.toFixed(1)}%`;
+        next.style.flex = `0 0 ${(100 - pct).toFixed(1)}%`;
+        label.textContent = `${pct.toFixed(0)}% / ${(100 - pct).toFixed(0)}%`;
+        label.classList.toggle('snapped', s.snapped);
+        label.style.left = `${me.clientX}px`;
+        label.style.top = `${me.clientY - 24}px`;
         fitAllRAF();
       }
       function onUp() {
         document.body.classList.remove('resizing', 'resizing-col');
-        (handle as HTMLElement).classList.remove('dragging');
+        h.classList.remove('dragging', 'snapped');
+        hideResizeLabel();
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         fitAll();
@@ -157,33 +254,46 @@ export function initSplitters(container: HTMLElement): void {
   });
 
   container.querySelectorAll('.split-h').forEach(handle => {
-    handle.addEventListener('mousedown', (e: Event) => {
+    const h = handle as HTMLElement;
+    h.addEventListener('dblclick', () => {
+      const prev = h.previousElementSibling as HTMLElement;
+      const next = h.nextElementSibling as HTMLElement;
+      if (prev && next) { resetSiblings(prev, next); fitAll(); }
+    });
+    h.addEventListener('mousedown', (e: Event) => {
       const me = e as MouseEvent;
       me.preventDefault();
-      const prevRow = (handle as HTMLElement).previousElementSibling as HTMLElement;
-      const nextRow = (handle as HTMLElement).nextElementSibling as HTMLElement;
+      const prevRow = h.previousElementSibling as HTMLElement;
+      const nextRow = h.nextElementSibling as HTMLElement;
       if (!prevRow || !nextRow) return;
-      const col = (handle as HTMLElement).parentElement!;
-      const panes = Array.from(col.children).filter(c => c.classList.contains('terminal-pane')) as HTMLElement[];
       const startY = me.clientY;
       const prevH = prevRow.offsetHeight;
       const nextH = nextRow.offsetHeight;
-      const colH = panes.reduce((s, p) => s + p.offsetHeight, 0);
+      const total = prevH + nextH;
       document.body.classList.add('resizing', 'resizing-row');
-      (handle as HTMLElement).classList.add('dragging');
+      h.classList.add('dragging');
+      const label = showResizeLabel();
 
       function onMove(e: Event) {
         const me = e as MouseEvent;
         const dy = me.clientY - startY;
-        const newPrev = Math.max(60, prevH + dy);
-        const newNext = Math.max(60, nextH - dy);
-        prevRow.style.flex = `0 0 ${(newPrev / colH * 100).toFixed(1)}%`;
-        nextRow.style.flex = `0 0 ${(newNext / colH * 100).toFixed(1)}%`;
+        const rawPrev = Math.max(PANE_MIN, Math.min(total - PANE_MIN, prevH + dy));
+        let pct = (rawPrev / total) * 100;
+        const s = snap(pct);
+        pct = s.value;
+        h.classList.toggle('snapped', s.snapped);
+        prevRow.style.flex = `0 0 ${pct.toFixed(1)}%`;
+        nextRow.style.flex = `0 0 ${(100 - pct).toFixed(1)}%`;
+        label.textContent = `${pct.toFixed(0)}% / ${(100 - pct).toFixed(0)}%`;
+        label.classList.toggle('snapped', s.snapped);
+        label.style.left = `${me.clientX}px`;
+        label.style.top = `${me.clientY - 24}px`;
         fitAllRAF();
       }
       function onUp() {
         document.body.classList.remove('resizing', 'resizing-row');
-        (handle as HTMLElement).classList.remove('dragging');
+        h.classList.remove('dragging', 'snapped');
+        hideResizeLabel();
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         fitAll();
@@ -213,8 +323,8 @@ export function initSidebarResize(): void {
       const newWidth = Math.max(60, Math.min(500, startW + dx));
       setState('sidebarWidth', newWidth);
       const cols = app.classList.contains('has-preview')
-        ? `1fr 1fr 5px ${newWidth}px`
-        : `1fr 5px ${newWidth}px`;
+        ? `1fr 1fr 6px ${newWidth}px`
+        : `1fr 6px ${newWidth}px`;
       app.style.gridTemplateColumns = cols;
       fitAllRAF();
     }
@@ -235,7 +345,12 @@ export function initPilotResize(): void {
   if (!handle) return;
   const h = handle;
 
-  let startY: number, startPilotH: number, container: HTMLElement;
+  let startY: number, startPilotH: number, container: HTMLElement, label: HTMLDivElement;
+
+  h.addEventListener('dblclick', () => {
+    const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
+    if (pilot) { pilot.style.flex = ''; fitAll(); }
+  });
 
   h.addEventListener('mousedown', (e) => {
     e.preventDefault();
@@ -246,6 +361,7 @@ export function initPilotResize(): void {
     startPilotH = pilot.offsetHeight;
     h.classList.add('dragging');
     document.body.classList.add('resizing', 'resizing-row');
+    label = showResizeLabel();
     document.addEventListener('mousemove', onMove);
     document.addEventListener('mouseup', onUp);
   });
@@ -254,15 +370,23 @@ export function initPilotResize(): void {
     const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
     if (!pilot) return;
     const totalH = container.offsetHeight;
-    const newH = Math.max(60, Math.min(totalH - 60, startPilotH + (e.clientY - startY)));
-    const pct = (newH / totalH * 100).toFixed(1);
-    pilot.style.flex = `0 0 ${pct}%`;
+    const rawH = Math.max(PANE_MIN, Math.min(totalH - PANE_MIN, startPilotH + (e.clientY - startY)));
+    let pct = (rawH / totalH) * 100;
+    const s = snap(pct);
+    pct = s.value;
+    h.classList.toggle('snapped', s.snapped);
+    pilot.style.flex = `0 0 ${pct.toFixed(1)}%`;
+    label.textContent = `Pilot ${pct.toFixed(0)}%`;
+    label.classList.toggle('snapped', s.snapped);
+    label.style.left = `${e.clientX}px`;
+    label.style.top = `${e.clientY - 24}px`;
     fitAllRAF();
   }
 
   function onUp() {
-    h.classList.remove('dragging');
+    h.classList.remove('dragging', 'snapped');
     document.body.classList.remove('resizing', 'resizing-row');
+    hideResizeLabel();
     document.removeEventListener('mousemove', onMove);
     document.removeEventListener('mouseup', onUp);
     fitAll();
