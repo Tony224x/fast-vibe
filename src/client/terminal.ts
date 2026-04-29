@@ -113,6 +113,19 @@ export function scheduleFitAll(ms = 50): void {
   fitAllTimer = setTimeout(() => { fitAllTimer = null; fitAll(); }, ms);
 }
 
+// Drop the cached body dimensions on every terminal so the next fitAll
+// always re-runs fitAddon.fit(). Use this after the DOM tree is rebuilt
+// (space switch, ungroup, drop) — pane bodies may have moved between
+// host and the offscreen store, and the cached size is meaningless until
+// they're laid out in their new parent.
+export function invalidateFitCache(): void {
+  terminals.forEach((t) => {
+    if (!t) return;
+    t.lastBodyW = undefined;
+    t.lastBodyH = undefined;
+  });
+}
+
 // ── Status Dot ──
 
 export function updatePaneDot(index: number, alive: boolean): void {

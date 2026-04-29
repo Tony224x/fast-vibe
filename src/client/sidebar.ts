@@ -1,6 +1,6 @@
 import { activeSpace, launched } from './state';
 import { escapeHtml, postJson } from './utils';
-import { createTerminal, updatePaneDot, fitAll } from './terminal';
+import { createTerminal, updatePaneDot, fitAll, invalidateFitCache } from './terminal';
 import { showToast } from './toast';
 import { ICONS } from './icons';
 import { initSplitters } from './ui-helpers';
@@ -136,6 +136,8 @@ export function initSidebarClickDelegation(): void {
     if (grid && tree) {
       renderLayout(grid, tree);
       initSplitters(grid);
+      invalidateFitCache();
+      requestAnimationFrame(() => fitAll());
     }
     pollStatus();
   }
