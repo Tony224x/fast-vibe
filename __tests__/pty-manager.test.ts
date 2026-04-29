@@ -157,6 +157,14 @@ describe('PtyManager', () => {
       mgr.kill(0);
       expect(mgr.sendInput(0, 'hello')).toBe(false);
     });
+
+    test('wraps multi-line text in bracketed-paste markers', () => {
+      mgr.launchAll('/tmp', 1, {});
+      mgr.sendInput(0, 'line1\nline2\nline3');
+      expect(mgr.slots[0].pty!.write).toHaveBeenCalledWith(
+        '\x1b[200~line1\nline2\nline3\x1b[201~'
+      );
+    });
   });
 
   describe('sendCommand', () => {

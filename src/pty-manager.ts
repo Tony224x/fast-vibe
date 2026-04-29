@@ -320,9 +320,16 @@ export class PtyManager {
     if (index >= this.slots.length) return false;
     const slot = this.slots[index];
     if (!slot.pty) return false;
-    // Write text, then send Enter after a short delay
-    // (Claude Code paste mode needs a separate Enter to submit)
-    safeWrite(slot.pty, text.replace(/\n/g, '\r'));
+    // Multi-line text: wrap in bracketed-paste so embedded newlines stay
+    // as newlines instead of being interpreted as Enter (submit).
+    // Single-line text: convert any \n to \r for plain typing.
+    // A trailing \r (after a short delay) submits the prompt — Claude Code
+    // paste mode needs a separate Enter once the paste buffer is rendered.
+    if (text.includes('\n')) {
+      safeWrite(slot.pty, `\x1b[200~${text}\x1b[201~`);
+    } else {
+      safeWrite(slot.pty, text.replace(/\n/g, '\r'));
+    }
     setTimeout(() => {
       safeWrite(slot.pty, '\r');
     }, 100);
