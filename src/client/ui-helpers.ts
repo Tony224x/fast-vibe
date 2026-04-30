@@ -219,7 +219,12 @@ export function initSplitters(container: HTMLElement): void {
       const startX = me.clientX;
       const prevW = prev.offsetWidth;
       const nextW = next.offsetWidth;
-      const total = prevW + nextW;
+      // Use total width of ALL pane siblings in the parent row (not just prev+next)
+      const parent = h.parentElement!;
+      let total = 0;
+      for (const el of Array.from(parent.children) as HTMLElement[]) {
+        if (!el.classList.contains('split-v')) total += el.offsetWidth;
+      }
       document.body.classList.add('resizing', 'resizing-col');
       h.classList.add('dragging');
       const label = showResizeLabel();
@@ -227,14 +232,16 @@ export function initSplitters(container: HTMLElement): void {
       function onMove(e: Event) {
         const me = e as MouseEvent;
         const dx = me.clientX - startX;
-        const rawPrev = Math.max(PANE_MIN, Math.min(total - PANE_MIN, prevW + dx));
-        let pct = (rawPrev / total) * 100;
-        const s = snap(pct);
-        pct = s.value;
+        const rawPrev = Math.max(PANE_MIN, Math.min(prevW + nextW - PANE_MIN, prevW + dx));
+        const prevPct = (rawPrev / total) * 100;
+        const nextPct = ((prevW + nextW - rawPrev) / total) * 100;
+        const s = snap(prevPct);
         h.classList.toggle('snapped', s.snapped);
-        prev.style.flex = `0 0 ${pct.toFixed(1)}%`;
-        next.style.flex = `0 0 ${(100 - pct).toFixed(1)}%`;
-        label.textContent = `${pct.toFixed(0)}% / ${(100 - pct).toFixed(0)}%`;
+        const finalPrev = s.snapped ? s.value : prevPct;
+        const finalNext = s.snapped ? ((prevW + nextW) / total * 100 - s.value) : nextPct;
+        prev.style.flex = `0 0 ${finalPrev.toFixed(1)}%`;
+        next.style.flex = `0 0 ${finalNext.toFixed(1)}%`;
+        label.textContent = `${finalPrev.toFixed(0)}% / ${finalNext.toFixed(0)}%`;
         label.classList.toggle('snapped', s.snapped);
         label.style.left = `${me.clientX}px`;
         label.style.top = `${me.clientY - 24}px`;
@@ -269,7 +276,12 @@ export function initSplitters(container: HTMLElement): void {
       const startY = me.clientY;
       const prevH = prevRow.offsetHeight;
       const nextH = nextRow.offsetHeight;
-      const total = prevH + nextH;
+      // Use total height of ALL pane siblings in the parent col (not just prev+next)
+      const parent = h.parentElement!;
+      let total = 0;
+      for (const el of Array.from(parent.children) as HTMLElement[]) {
+        if (!el.classList.contains('split-h')) total += el.offsetHeight;
+      }
       document.body.classList.add('resizing', 'resizing-row');
       h.classList.add('dragging');
       const label = showResizeLabel();
@@ -277,14 +289,16 @@ export function initSplitters(container: HTMLElement): void {
       function onMove(e: Event) {
         const me = e as MouseEvent;
         const dy = me.clientY - startY;
-        const rawPrev = Math.max(PANE_MIN, Math.min(total - PANE_MIN, prevH + dy));
-        let pct = (rawPrev / total) * 100;
-        const s = snap(pct);
-        pct = s.value;
+        const rawPrev = Math.max(PANE_MIN, Math.min(prevH + nextH - PANE_MIN, prevH + dy));
+        const prevPct = (rawPrev / total) * 100;
+        const nextPct = ((prevH + nextH - rawPrev) / total) * 100;
+        const s = snap(prevPct);
         h.classList.toggle('snapped', s.snapped);
-        prevRow.style.flex = `0 0 ${pct.toFixed(1)}%`;
-        nextRow.style.flex = `0 0 ${(100 - pct).toFixed(1)}%`;
-        label.textContent = `${pct.toFixed(0)}% / ${(100 - pct).toFixed(0)}%`;
+        const finalPrev = s.snapped ? s.value : prevPct;
+        const finalNext = s.snapped ? ((prevH + nextH) / total * 100 - s.value) : nextPct;
+        prevRow.style.flex = `0 0 ${finalPrev.toFixed(1)}%`;
+        nextRow.style.flex = `0 0 ${finalNext.toFixed(1)}%`;
+        label.textContent = `${finalPrev.toFixed(0)}% / ${finalNext.toFixed(0)}%`;
         label.classList.toggle('snapped', s.snapped);
         label.style.left = `${me.clientX}px`;
         label.style.top = `${me.clientY - 24}px`;
