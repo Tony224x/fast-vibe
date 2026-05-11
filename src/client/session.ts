@@ -113,6 +113,80 @@ export async function launchSession(): Promise<void> {
   }
 }
 
+// Auto-reconnect : si /api/status retourne une session active (browser fermé/
+// rouvert, ou serveur redémarré avec restoreAll), on rebuild le grid sans
+// repasser par /api/launch — les PTYs sont déjà spawnés côté serveur, on
+// branche juste les xterm + WebSocket dessus.
+export async function restoreSession(
+  session: { cwd: string; engine: string; noPilot: boolean; trustMode: boolean },
+  indices: number[],
+): Promise<void> {
+  const { cwd, engine: e, noPilot: np, trustMode: tm } = session;
+  setState('engine', e);
+  setState('noPilot', np);
+  setState('trustMode', tm);
+
+  const cwdInput = document.getElementById('cwd-input') as HTMLInputElement;
+  if (cwdInput) cwdInput.value = cwd;
+
+  // workerCount = nombre de panes hors pilot (slot 0 quand !noPilot)
+  const workerIndices = np ? indices : indices.filter(i => i !== 0);
+  const wc = workerIndices.length;
+  setState('workerCount', wc);
+
+  await buildWorkerPanes(wc);
+
+  const pilotPane = document.querySelector('.terminal-pane.pilot');
+  const resizeHandle = document.getElementById('resize-handle');
+  if (np) {
+    if (pilotPane) pilotPane.remove();
+    if (resizeHandle) resizeHandle.classList.add('hidden');
+  } else {
+    if (resizeHandle) resizeHandle.classList.remove('hidden');
+    const grid = document.getElementById('workers-grid')!;
+    if (!document.querySelector('.terminal-pane.pilot')) {
+      grid.insertAdjacentHTML('beforebegin', paneHeader('Pilot', 0, true));
+    }
+  }
+
+  document.getElementById('welcome')!.classList.add('hidden');
+  document.getElementById('terminals')!.classList.remove('hidden');
+  document.getElementById('btn-start')!.classList.add('hidden');
+  document.getElementById('btn-stop')!.classList.remove('hidden');
+  const infoBase = `${cwd} (${e}${np ? ', no pilot' : ''}${tm ? ', trust' : ', safe'})`;
+  document.getElementById('session-info')!.textContent = infoBase + ' · resumed';
+  document.getElementById('broadcast-bar')!.classList.remove('hidden');
+
+  setState('launched', true);
+  setState('launchTimestamp', Date.now());
+
+  const infoEl = document.getElementById('session-info')!;
+  if (sessionTimerInterval) clearInterval(sessionTimerInterval);
+  setState('sessionTimerInterval', setInterval(() => {
+    const sec = Math.floor((Date.now() - launchTimestamp) / 1000);
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    infoEl.textContent = `${infoBase} · ${m}m ${s}s`;
+  }, 1000));
+
+  for (const i of indices) {
+    createTerminal(i);
+  }
+
+  setFocused(np ? 0 : 0);
+  scheduleFitAll(100);
+
+  // Auto-zen comme launchSession (cohérence UX) — sauf si déjà appliqué
+  const appEl = document.getElementById('app')!;
+  if (!appEl.classList.contains('launchbar-hidden')) toggleZen();
+
+  if (previewUrl) {
+    (document.getElementById('preview-url') as HTMLInputElement).value = previewUrl;
+    togglePreview(true);
+    loadPreview();
+  }
+}
+
 export async function stopSession(): Promise<void> {
   await postJson('/api/stop');
   destroyTerminals();

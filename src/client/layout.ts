@@ -12,6 +12,7 @@
 import { ICONS } from './icons';
 import { noPilot, activeSpace, setState } from './state';
 import { escapeHtml, postJson } from './utils';
+import { QUICK_PROMPTS } from './prompts';
 
 export type PaneNode = { type: 'pane'; index: number };
 export type SplitNode = { type: 'split'; dir: 'row' | 'col'; children: LayoutNode[]; sizes?: number[] };
@@ -351,6 +352,23 @@ function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]
         </span>${tabBar}
         <span class="pane-actions">
           <span class="pane-actions-overflow">
+            <span class="pane-compose-wrapper">
+              <button class="btn-pane-action btn-compose-toggle" data-action="compose-toggle" data-index="${index}" data-tooltip="Composer / améliorer un prompt" title="Composer">${ICONS.messageSquare}</button>
+              <div class="pane-compose-popover hidden" data-compose-popover="${index}">
+                <textarea class="compose-textarea" data-index="${index}" placeholder="Ton prompt — Ctrl+I pour améliorer, Ctrl+Enter pour envoyer…" rows="5"></textarea>
+                <div class="compose-actions">
+                  <button class="compose-btn compose-btn-improve" data-action="compose-improve" data-index="${index}" title="Améliorer (Ctrl+I)">${ICONS.sparkles}<span>Améliorer</span></button>
+                  <button class="compose-btn compose-btn-send" data-action="compose-send" data-index="${index}" title="Envoyer (Ctrl+Enter)">${ICONS.send}<span>Envoyer</span></button>
+                </div>
+              </div>
+            </span>
+            <button class="btn-pane-action btn-next-steps" data-action="next-steps" data-index="${index}" data-tooltip="Next steps" title="Next steps">${ICONS.sparkles}</button>
+            <span class="pane-prompts-wrapper">
+              <button class="btn-pane-action btn-prompts-toggle" data-action="prompts-toggle" data-index="${index}" data-tooltip="Prompts pré-faits" title="Prompts">${ICONS.wand}</button>
+              <div class="pane-prompts-menu hidden" data-prompts-menu="${index}">
+                ${QUICK_PROMPTS.map(p => `<button class="prompt-item" data-action="prompt-pick" data-index="${index}" data-prompt-id="${p.id}"><span class="prompt-label">${escapeHtml(p.label)}</span><span class="prompt-hint">${escapeHtml(p.hint)}</span></button>`).join('')}
+              </div>
+            </span>
             <button class="btn-pane-action btn-verify" data-action="verify" data-index="${index}" data-tooltip="Verify (code review)" title="Verify">${ICONS.check}<span>Verify</span></button>
             <button class="btn-pane-action" data-action="copy" data-index="${index}" data-tooltip="Copy output" title="Copy">${ICONS.copy}</button>
             <button class="btn-pane-action" data-action="compact" data-index="${index}" data-tooltip="Compact context" title="Compact">${ICONS.layers}</button>

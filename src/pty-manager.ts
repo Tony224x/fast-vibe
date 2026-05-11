@@ -2,6 +2,7 @@ import * as pty from 'node-pty';
 import type { IPty } from 'node-pty';
 import * as fs from 'fs';
 import * as path from 'path';
+import { randomUUID } from 'crypto';
 import type { WebSocket } from 'ws';
 
 import { matchStaticSuggestion } from './suggest-patterns';
@@ -93,6 +94,8 @@ export class PtyManager {
   logsEnabled: boolean;
   logsDir: string;
   autoRestart: boolean;
+  // Notification de mutation d'état (pour persistance .session-state.json)
+  onStateChange?: () => void;
 
   constructor() {
     this.count = 0;
@@ -111,6 +114,12 @@ export class PtyManager {
     this.suggestions = {};
     this.suggestQueue = [];
     this.suggestBusy = false;
+  }
+
+  private notifyStateChange(): void {
+    try { this.onStateChange?.(); } catch (e: unknown) {
+      log('state-change-error', (e as Error).message);
+    }
   }
 
   spawn(index: number, cwd?: string): IPty | null {
@@ -184,11 +193,28 @@ export class PtyManager {
           ? `doskey c=${claudeCmd} $*`
           : `alias c="${claudeCmd}"`;
 
+        // Stratégie sessions persistantes :
+        //  - 1er lancement (slot.resume falsy) : --session-id <uuid> pour
+        //    forcer un id qu'on contrôle, qu'on persistera ensuite.
+        //  - Après reboot (slot.resume true) : --resume <uuid> reprend la
+        //    conversation existante.
+        const sid = slot.sessionId;
+        const sessionFlag = sid
+          ? (slot.resume ? `--resume ${sid}` : `--session-id ${sid}`)
+          : '';
+
         let cmd = claudeCmd;
         if (isPilot) {
           const promptPath = PILOT_PROMPT_FILE.replace(/\\/g, '/');
           cmd = `${claudeCmd} --disallowedTools Agent --append-system-prompt-file "${promptPath}"`;
         }
+        if (sessionFlag) cmd = `${cmd} ${sessionFlag}`;
+
+        // Une fois le `claude` initial sortie, le prochain reboot reprend la
+        // conversation existante. On flippe `resume` ici pour que tout
+        // re-spawn (auto-restart, restart manuel, restoreAll) utilise --resume.
+        if (sid && !slot.resume) slot.resume = true;
+
         return alias + nl + cmd + nl;
       }
     })();
@@ -227,6 +253,14 @@ export class PtyManager {
       // Auto-restart on unexpected exit
       if (this.autoRestart && !slot.removed && exitCode !== 0 && slot.restartCount < 3) {
         slot.restartCount++;
+        // Fallback : si --resume vient d'échouer (1ère tentative de la
+        // séquence de retry), on bascule en --session-id pour ne pas boucler
+        // sur une session corrompue côté claude. La conversation est perdue
+        // mais le grid reste stable et la nouvelle session reprend l'UUID.
+        if (slot.resume && slot.sessionId && slot.restartCount === 1) {
+          log('resume-failed', `terminal=${index} session=${slot.sessionId} → fallback to fresh`);
+          slot.resume = false;
+        }
         log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in 3s`);
         setTimeout(() => { this.spawn(index, this.cwd); }, 3000);
       }
@@ -381,11 +415,16 @@ export class PtyManager {
 
     log('launch', `engine=${this.engine} workers=${workerCount} noPilot=${this.noPilot} trust=${this.trustMode} cwd=${this.cwd}`);
 
-    // Rebuild slots array
+    // Rebuild slots array — un UUID v4 par slot pour les sessions claude.
+    // Ces UUIDs sont la clé de la persistance : on les passe à
+    // `claude --session-id <uuid>` au 1er lancement, puis `--resume <uuid>`
+    // après reboot pour reprendre la même conversation.
     this.slots = Array.from({ length: this.count }, (): Slot => ({
       pty: null, ws: null, startedAt: null,
       chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
       restartCount: 0,
+      sessionId: this.engine === 'claude' ? randomUUID() : null,
+      resume: false,
     }));
 
     // Update pilot prompt with correct worker count (only for claude with pilot)
@@ -397,7 +436,55 @@ export class PtyManager {
       this.spawn(i, this.cwd);
     }
 
+    this.notifyStateChange();
     // Suggesteur is spawned on demand (first AI suggestion request), not at launch
+  }
+
+  // Restore depuis un état persisté (.session-state.json) — appelé au boot du
+  // serveur. Les slots sont reconstruits avec les sessionIds capturés
+  // précédemment, et chaque worker spawn avec --resume <uuid>.
+  restoreAll(state: {
+    cwd: string;
+    engine: string;
+    noPilot: boolean;
+    trustMode: boolean;
+    useWSL: boolean;
+    workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
+  }): void {
+    this.killAll();
+    this.cwd = state.cwd || process.cwd();
+    this.engine = state.engine || 'claude';
+    this.noPilot = !!state.noPilot;
+    this.trustMode = !!state.trustMode;
+    this.useWSL = !!state.useWSL;
+    // Slots indexed by position; on recrée la grille telle que persistée
+    // (workers déjà supprimés inclus comme tombstones pour préserver les indices)
+    const maxIndex = state.workers.reduce((m, w) => Math.max(m, w.index), -1);
+    this.count = maxIndex + 1;
+    this.slots = Array.from({ length: this.count }, (_, i): Slot => {
+      const w = state.workers.find(x => x.index === i);
+      return {
+        pty: null, ws: null, startedAt: null,
+        chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+        restartCount: 0,
+        sessionId: w?.sessionId ?? null,
+        resume: !!(w?.sessionId),
+        removed: w?.removed,
+      };
+    });
+
+    if (this.engine === 'claude' && !this.noPilot) {
+      const workerCount = this.count - 1;
+      writePilotPrompt(Math.max(0, workerCount));
+    }
+
+    log('restore', `engine=${this.engine} count=${this.count} cwd=${this.cwd}`);
+
+    for (let i = 0; i < this.count; i++) {
+      if (!this.slots[i].removed) this.spawn(i, this.cwd);
+    }
+
+    this.notifyStateChange();
   }
 
   // Add a single new worker slot at the end and spawn its PTY. Returns the new
@@ -409,9 +496,12 @@ export class PtyManager {
       pty: null, ws: null, startedAt: null,
       chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
       restartCount: 0,
+      sessionId: this.engine === 'claude' ? randomUUID() : null,
+      resume: false,
     });
     this.count = this.slots.length;
     this.spawn(newIndex, this.cwd);
+    this.notifyStateChange();
     return newIndex;
   }
 
@@ -425,6 +515,7 @@ export class PtyManager {
     if (slot.removed) return true;
     slot.removed = true;
     this.kill(index);
+    this.notifyStateChange();
     return true;
   }
 

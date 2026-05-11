@@ -4,6 +4,9 @@ import { fitAll, fitAllRAF, scheduleFitAll } from './terminal';
 import { showToast } from './toast';
 import { detachPane, findGroupNode, getLayout, setActiveSpace, setLayout, renderLayout, captureSizes } from './layout';
 import { activeSpace } from './state';
+import { getQuickPrompt } from './prompts';
+export { QUICK_PROMPTS, getQuickPrompt } from './prompts';
+export type { QuickPrompt } from './prompts';
 
 export function inlineConfirm(btn: HTMLElement, action: () => void): void {
   const el = btn as HTMLElement & { dataset: DOMStringMap };
@@ -153,6 +156,107 @@ When done, briefly summarize what was fixed (or confirm the code was already cle
 export async function verifyTerminal(id: number): Promise<void> {
   await postJson(`/api/terminal/${id}/send`, { text: VERIFY_PROMPT });
   showToast(`Verify prompt sent to terminal ${id}`);
+}
+
+export async function sendQuickPrompt(terminalId: number, promptId: string): Promise<void> {
+  const p = getQuickPrompt(promptId);
+  if (!p) return;
+  await postJson(`/api/terminal/${terminalId}/send`, { text: p.text });
+  showToast(`${p.label} → terminal ${terminalId}`);
+}
+
+export async function nextStepsTerminal(id: number): Promise<void> {
+  await sendQuickPrompt(id, 'next-steps');
+}
+
+// Per-pane compose popover : améliore le contenu du textarea du pane `idx`
+// via /api/improve-prompt (one-shot CLI). N'envoie rien au PTY tant que
+// l'utilisateur n'a pas cliqué Envoyer.
+export async function improveComposePrompt(idx: number): Promise<void> {
+  const wrapper = document.querySelector(`[data-compose-popover="${idx}"]`) as HTMLElement | null;
+  if (!wrapper) return;
+  const textarea = wrapper.querySelector('.compose-textarea') as HTMLTextAreaElement | null;
+  const improveBtn = wrapper.querySelector('.compose-btn-improve') as HTMLButtonElement | null;
+  if (!textarea) return;
+  const text = textarea.value.trim();
+  if (!text) {
+    showToast('Tape un prompt à améliorer');
+    return;
+  }
+  if (improveBtn) { improveBtn.disabled = true; improveBtn.classList.add('loading'); }
+  textarea.disabled = true;
+  const original = text;
+  try {
+    const res = await postJson('/api/improve-prompt', { text });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || `Improve failed (${res.status})`);
+      return;
+    }
+    if (data.improved) {
+      textarea.value = data.improved;
+      textarea.dataset.beforeImprove = original;
+      showToast(`Prompt amélioré (${data.engine || 'claude'})`);
+    }
+  } catch (err: unknown) {
+    showToast(`Improve error: ${(err as Error).message}`);
+  } finally {
+    if (improveBtn) { improveBtn.disabled = false; improveBtn.classList.remove('loading'); }
+    textarea.disabled = false;
+    textarea.focus();
+  }
+}
+
+export async function sendComposePrompt(idx: number): Promise<void> {
+  const wrapper = document.querySelector(`[data-compose-popover="${idx}"]`) as HTMLElement | null;
+  if (!wrapper) return;
+  const textarea = wrapper.querySelector('.compose-textarea') as HTMLTextAreaElement | null;
+  if (!textarea) return;
+  const text = textarea.value.trim();
+  if (!text) {
+    showToast('Rien à envoyer');
+    return;
+  }
+  await postJson(`/api/terminal/${idx}/send`, { text });
+  showToast(`Prompt envoyé au terminal ${idx}`);
+  textarea.value = '';
+  delete textarea.dataset.beforeImprove;
+  wrapper.classList.add('hidden');
+}
+
+// Replace the broadcast input value with an LLM-improved version of the
+// current prompt. Calls a one-shot CLI on the server (claude -p / kiro-cli
+// chat -p) — it does NOT touch the running workers' contexts.
+export async function improveBroadcastPrompt(): Promise<void> {
+  const input = document.getElementById('broadcast-input') as HTMLInputElement;
+  const btn = document.getElementById('btn-broadcast-improve') as HTMLButtonElement | null;
+  const text = input.value.trim();
+  if (!text) {
+    showToast('Tape un prompt à améliorer dans le champ broadcast');
+    return;
+  }
+  if (btn) { btn.disabled = true; btn.classList.add('loading'); }
+  input.disabled = true;
+  const original = text;
+  try {
+    const res = await postJson('/api/improve-prompt', { text });
+    const data = await res.json();
+    if (!res.ok) {
+      showToast(data.error || `Improve failed (${res.status})`);
+      return;
+    }
+    if (data.improved) {
+      input.value = data.improved;
+      input.dataset.beforeImprove = original;
+      showToast(`Prompt amélioré (${data.engine || 'claude'})`);
+    }
+  } catch (err: unknown) {
+    showToast(`Improve error: ${(err as Error).message}`);
+  } finally {
+    if (btn) { btn.disabled = false; btn.classList.remove('loading'); }
+    input.disabled = false;
+    input.focus();
+  }
 }
 
 export async function sendBroadcast(): Promise<void> {

@@ -6,6 +6,7 @@ import fs from 'fs';
 import { exec } from 'child_process';
 import { PtyManager } from './pty-manager';
 import { Settings, Bookmark, Profile, DEFAULTS } from './types';
+import { improver } from './prompt-improver';
 
 const app = express();
 const server = http.createServer(app);
@@ -27,6 +28,60 @@ function saveSettings(): void {
 }
 
 let settings: Settings = loadSettings();
+
+// ── Session state (cross-restart resume) ──
+//
+// Stocke par worker : { index, sessionId, removed }. Au boot, on relit ce
+// fichier et on `restoreAll()` pour relancer chaque claude avec --resume.
+// Effacé explicitement sur /api/stop (l'utilisateur veut une session neuve)
+// mais préservé sur SIGINT/SIGTERM (l'utilisateur veut retrouver son état).
+
+const SESSION_STATE_FILE = path.join(__dirname, '..', '.session-state.json');
+
+interface SessionState {
+  cwd: string;
+  engine: string;
+  noPilot: boolean;
+  trustMode: boolean;
+  useWSL: boolean;
+  workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
+}
+
+function persistSessionState(): void {
+  // Ne persiste que si une session est effectivement active (au moins un slot
+  // avec sessionId). Sinon on n'écrit pas pour ne pas créer un fichier vide.
+  if (ptyManager.slots.length === 0) return;
+  const state: SessionState = {
+    cwd: ptyManager.cwd,
+    engine: ptyManager.engine,
+    noPilot: ptyManager.noPilot,
+    trustMode: ptyManager.trustMode,
+    useWSL: ptyManager.useWSL,
+    workers: ptyManager.slots.map((s, i) => ({
+      index: i,
+      sessionId: s.sessionId ?? null,
+      removed: s.removed,
+    })),
+  };
+  fs.writeFile(SESSION_STATE_FILE, JSON.stringify(state, null, 2), (err) => {
+    if (err) console.error('[session-state] write error:', err.message);
+  });
+}
+
+function clearSessionState(): void {
+  fs.unlink(SESSION_STATE_FILE, () => { /* noop */ });
+}
+
+function loadSessionState(): SessionState | null {
+  try {
+    const raw = fs.readFileSync(SESSION_STATE_FILE, 'utf8');
+    const state = JSON.parse(raw) as SessionState;
+    if (!state.cwd || !Array.isArray(state.workers)) return null;
+    return state;
+  } catch { return null; }
+}
+
+ptyManager.onStateChange = persistSessionState;
 
 app.use(express.json());
 
@@ -89,7 +144,16 @@ app.post('/api/settings', (req: Request, res: Response) => {
 // ── Status API ──
 
 app.get('/api/status', (_req: Request, res: Response) => {
-  res.json({ terminals: ptyManager.getStatus() });
+  // session: null si aucune session active. Sinon, expose cwd/engine/noPilot
+  // pour que le frontend rebuild le grid lors d'un auto-reconnect (browser
+  // fermé/rouvert, ou redémarrage serveur avec restoreAll).
+  const session = ptyManager.slots.length > 0 ? {
+    cwd: ptyManager.cwd,
+    engine: ptyManager.engine,
+    noPilot: ptyManager.noPilot,
+    trustMode: ptyManager.trustMode,
+  } : null;
+  res.json({ terminals: ptyManager.getStatus(), session });
 });
 
 // ── Bookmarks API ──
@@ -210,6 +274,9 @@ app.post('/api/launch', (req: Request, res: Response) => {
 
 app.post('/api/stop', async (_req: Request, res: Response) => {
   await ptyManager.killAll();
+  // /api/stop = "session terminée" : on supprime le state pour que le prochain
+  // boot affiche le welcome au lieu de restorer.
+  clearSessionState();
   res.json({ ok: true });
 });
 
@@ -324,6 +391,45 @@ app.post('/api/batch/clear', (_req: Request, res: Response) => {
     terminal: t.id, ok: ptyManager.sendCommand(t.id, '/clear'),
   }));
   res.json({ ok: true, results });
+});
+
+// ── Improve prompt (always-on Claude session, --resume + cache) ──
+//
+// Délègue à PromptImprover qui maintient une session `claude` persistante via
+// --resume. La 1ère requête prime la session (~5-10s), les suivantes hit le
+// cache prompt (~2-3s). Aucune interaction avec les workers / pilot.
+
+const improveLimiter = new Map<string, { count: number; resetAt: number }>();
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, e] of improveLimiter) if (e.resetAt < now) improveLimiter.delete(ip);
+}, 60_000);
+
+app.post('/api/improve-prompt', async (req: Request, res: Response) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const now = Date.now();
+  let entry = improveLimiter.get(ip);
+  if (!entry || entry.resetAt < now) { entry = { count: 0, resetAt: now + 60_000 }; improveLimiter.set(ip, entry); }
+  entry.count++;
+  if (entry.count > 20) return res.status(429).json({ error: 'Rate limit: 20 requests per minute.' });
+
+  const text = typeof req.body.text === 'string' ? req.body.text.trim() : '';
+  if (!text) return res.status(400).json({ error: 'Missing text' });
+  if (text.length > 4000) return res.status(400).json({ error: 'Text too long (max 4000 chars).' });
+
+  try {
+    const out = await improver.improve(text);
+    res.json({
+      improved: out.improved,
+      engine: 'claude',
+      session_id: out.session_id,
+      reused_session: out.reused_session,
+      cached_tokens: out.cached_tokens,
+      duration_ms: out.duration_ms,
+    });
+  } catch (err: unknown) {
+    res.status(500).json({ error: `improve failed: ${(err as Error).message}` });
+  }
 });
 
 // ── Layout API ──
@@ -492,6 +598,21 @@ const PORT = parseInt(process.env.PORT || '3333', 10);
 if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () => {
     logServer('start', `fast-vibe v1.0.0 running at http://localhost:${PORT} (pid=${process.pid})`);
+    // Auto-restore : si .session-state.json existe, relance les workers en
+    // mode --resume. L'utilisateur retrouve son grid et ses conversations
+    // claude au prochain démarrage du serveur.
+    const restored = loadSessionState();
+    if (restored && restored.cwd && fs.existsSync(restored.cwd)) {
+      logServer('auto-restore', `cwd=${restored.cwd} workers=${restored.workers.length}`);
+      try {
+        ptyManager.restoreAll(restored);
+      } catch (e: unknown) {
+        logServer('restore-error', (e as Error).message);
+      }
+    } else if (restored) {
+      logServer('restore-skipped', `cwd missing: ${restored.cwd}`);
+      clearSessionState();
+    }
   });
 }
 

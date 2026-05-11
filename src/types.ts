@@ -31,6 +31,13 @@ export interface Slot {
   dirty: boolean;
   restartCount: number;
   removed?: boolean;
+  // UUID v4 — passé à `claude --session-id <uuid>` au 1er lancement,
+  // puis utilisé avec `claude --resume <uuid>` pour reprendre la conversation
+  // après redémarrage du serveur. Null pour kiro (pas de session id).
+  sessionId?: string | null;
+  // true si le prochain spawn doit faire --resume (session déjà existante côté
+  // claude), false si --session-id (création fresh avec id contrôlé).
+  resume?: boolean;
 }
 
 export interface Suggestion {
@@ -75,7 +82,7 @@ export const DEFAULTS: Settings = {
   workers: 4,
   previewUrl: '',
   engine: 'claude',
-  noPilot: false,
+  noPilot: true,
   trustMode: false,
   useWSL: false,
   autoFocus: true,

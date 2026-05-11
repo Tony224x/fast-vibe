@@ -1,14 +1,15 @@
 import { setState, theme } from './state';
 import { applyTheme } from './theme';
 import { handleGlobalKeydown } from './keyboard';
-import { launchSession, stopSession } from './session';
+import { launchSession, stopSession, restoreSession } from './session';
 import { openSettings, saveSettings, closeSettings, initProfilesUI } from './settings';
 import { loadBookmarksUI, addBookmark, toggleBookmarks, pickFolder, renderWelcomeProjects, updateBookmarkStar } from './bookmarks';
 import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } from './preview';
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
+import { escapeHtml } from './utils';
 import { initHelp } from './help';
 import { debounce } from './utils';
 
@@ -29,6 +30,18 @@ document.addEventListener('DOMContentLoaded', async () => {
     setState('suggestMode', s.suggestMode || 'off');
     setState('theme', s.theme || 'dark');
     applyTheme();
+  } catch {}
+
+  // Auto-reconnect : si une session est déjà active côté serveur (browser
+  // fermé/rouvert, ou serveur redémarré avec restoreAll), reconstruire le
+  // grid au lieu d'afficher le welcome.
+  try {
+    const r = await fetch('/api/status');
+    const data = await r.json();
+    if (data.session && Array.isArray(data.terminals) && data.terminals.length > 0) {
+      const indices = data.terminals.map((t: { id: number }) => t.id);
+      await restoreSession(data.session, indices);
+    }
   } catch {}
 
   document.getElementById('btn-start')!.addEventListener('click', () => launchSession());
@@ -84,7 +97,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Pane header actions (delegated)
   document.getElementById('terminals')!.addEventListener('click', (e) => {
-    const btn = (e.target as HTMLElement).closest('.btn-pane-action') as HTMLElement | null;
+    const btn = (e.target as HTMLElement).closest('.btn-pane-action, .prompt-item, .compose-btn') as HTMLElement | null;
     if (!btn) return;
     const action = btn.dataset.action;
     const idx = parseInt(btn.dataset.index!, 10);
@@ -101,6 +114,70 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     else if (action === 'verify') verifyTerminal(idx);
     else if (action === 'copy') copyOutput(idx);
+    else if (action === 'next-steps') nextStepsTerminal(idx);
+    else if (action === 'prompts-toggle') {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrapper = btn.closest('.pane-prompts-wrapper') as HTMLElement | null;
+      const menu = wrapper?.querySelector('.pane-prompts-menu') as HTMLElement | null;
+      if (!menu) return;
+      // Lazy-fill the menu (the static pilot pane in index.html ships empty)
+      if (!menu.children.length) {
+        menu.innerHTML = QUICK_PROMPTS.map(p =>
+          `<button class="prompt-item" data-action="prompt-pick" data-index="${idx}" data-prompt-id="${p.id}">` +
+          `<span class="prompt-label">${escapeHtml(p.label)}</span>` +
+          `<span class="prompt-hint">${escapeHtml(p.hint)}</span>` +
+          `</button>`
+        ).join('');
+      }
+      const wasOpen = !menu.classList.contains('hidden');
+      // Close any other open prompts menu first
+      document.querySelectorAll('.pane-prompts-menu').forEach(el => el.classList.add('hidden'));
+      if (!wasOpen) menu.classList.remove('hidden');
+    }
+    else if (action === 'prompt-pick') {
+      const promptId = btn.dataset.promptId;
+      if (promptId) sendQuickPrompt(idx, promptId);
+      document.querySelectorAll('.pane-prompts-menu').forEach(el => el.classList.add('hidden'));
+    }
+    else if (action === 'compose-toggle') {
+      e.preventDefault();
+      e.stopPropagation();
+      const wrapper = btn.closest('.pane-compose-wrapper') as HTMLElement | null;
+      const popover = wrapper?.querySelector('.pane-compose-popover') as HTMLElement | null;
+      if (!popover) return;
+      const wasOpen = !popover.classList.contains('hidden');
+      // Close other compose + prompts popovers
+      document.querySelectorAll('.pane-compose-popover').forEach(el => el.classList.add('hidden'));
+      document.querySelectorAll('.pane-prompts-menu').forEach(el => el.classList.add('hidden'));
+      if (!wasOpen) {
+        popover.classList.remove('hidden');
+        const ta = popover.querySelector('.compose-textarea') as HTMLTextAreaElement | null;
+        ta?.focus();
+      }
+    }
+    else if (action === 'compose-improve') improveComposePrompt(idx);
+    else if (action === 'compose-send') sendComposePrompt(idx);
+  });
+
+  // Compose popover keyboard shortcuts (Ctrl+I = improve, Ctrl+Enter = send)
+  document.getElementById('terminals')!.addEventListener('keydown', (e) => {
+    const ke = e as KeyboardEvent;
+    const ta = (ke.target as HTMLElement).closest('.compose-textarea') as HTMLTextAreaElement | null;
+    if (!ta) return;
+    const idx = parseInt(ta.dataset.index!, 10);
+    if (isNaN(idx)) return;
+    if ((ke.ctrlKey || ke.metaKey) && ke.key.toLowerCase() === 'i') {
+      ke.preventDefault();
+      improveComposePrompt(idx);
+    } else if ((ke.ctrlKey || ke.metaKey) && ke.key === 'Enter') {
+      ke.preventDefault();
+      sendComposePrompt(idx);
+    } else if (ke.key === 'Escape') {
+      ke.preventDefault();
+      const popover = ta.closest('.pane-compose-popover') as HTMLElement | null;
+      popover?.classList.add('hidden');
+    }
   });
 
   // Close overflow popover on outside click
@@ -109,12 +186,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (!target.closest('.pane-actions')) {
       document.querySelectorAll('.pane-actions.overflow-open').forEach(el => el.classList.remove('overflow-open'));
     }
+    if (!target.closest('.pane-prompts-wrapper')) {
+      document.querySelectorAll('.pane-prompts-menu').forEach(el => el.classList.add('hidden'));
+    }
+    if (!target.closest('.pane-compose-wrapper')) {
+      document.querySelectorAll('.pane-compose-popover').forEach(el => el.classList.add('hidden'));
+    }
   });
 
   // Broadcast
   document.getElementById('btn-broadcast-send')!.addEventListener('click', sendBroadcast);
+  document.getElementById('btn-broadcast-improve')!.addEventListener('click', improveBroadcastPrompt);
   document.getElementById('broadcast-input')!.addEventListener('keydown', (e) => {
-    if ((e as KeyboardEvent).key === 'Enter') sendBroadcast();
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'Enter') sendBroadcast();
+    // Ctrl/Cmd+I → improve in place
+    else if ((ke.ctrlKey || ke.metaKey) && ke.key.toLowerCase() === 'i') {
+      ke.preventDefault();
+      improveBroadcastPrompt();
+    }
   });
 
   // Zen mode

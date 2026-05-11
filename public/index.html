@@ -61,6 +61,31 @@
               <span class="status-text">--</span>
             </span>
             <span class="pane-actions">
+              <span class="pane-compose-wrapper">
+                <button class="btn-pane-action btn-compose-toggle" data-action="compose-toggle" data-index="0" data-tooltip="Composer / améliorer un prompt" title="Composer">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                </button>
+                <div class="pane-compose-popover hidden" data-compose-popover="0">
+                  <textarea class="compose-textarea" data-index="0" placeholder="Ton prompt — Ctrl+I pour améliorer, Ctrl+Enter pour envoyer…" rows="5"></textarea>
+                  <div class="compose-actions">
+                    <button class="compose-btn compose-btn-improve" data-action="compose-improve" data-index="0" title="Améliorer (Ctrl+I)">
+                      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/></svg><span>Améliorer</span>
+                    </button>
+                    <button class="compose-btn compose-btn-send" data-action="compose-send" data-index="0" title="Envoyer (Ctrl+Enter)">
+                      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg><span>Envoyer</span>
+                    </button>
+                  </div>
+                </div>
+              </span>
+              <button class="btn-pane-action btn-next-steps" data-action="next-steps" data-index="0" data-tooltip="Next steps" title="Next steps">
+                <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/></svg>
+              </button>
+              <span class="pane-prompts-wrapper">
+                <button class="btn-pane-action btn-prompts-toggle" data-action="prompts-toggle" data-index="0" data-tooltip="Prompts pré-faits" title="Prompts">
+                  <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M3 21l9-9"/><path d="M14 7l3 3"/><path d="M5 6h2"/><path d="M6 5v2"/><path d="M19 14h2"/><path d="M20 13v2"/><path d="M15 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/></svg>
+                </button>
+                <div class="pane-prompts-menu hidden" data-prompts-menu="0"></div>
+              </span>
               <button class="btn-pane-action btn-verify" data-action="verify" data-index="0" data-tooltip="Verify (code review)" title="Verify">
                 <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><polyline points="20 6 9 17 4 12"/></svg><span>Verify</span>
               </button>
@@ -141,6 +166,9 @@
       <!-- Broadcast -->
       <div id="broadcast-bar" class="hidden">
         <input type="text" id="broadcast-input" placeholder="Broadcast to all workers…" spellcheck="false">
+        <button id="btn-broadcast-improve" title="Améliorer le prompt (one-shot, ne pollue pas les workers)" aria-label="Improve prompt">
+          <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/></svg>
+        </button>
         <button id="btn-broadcast-send" title="Send to all workers" aria-label="Broadcast send">
           <svg class="icon icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
         </button>

@@ -45,4 +45,7 @@ export const ICONS = {
   arrowDownCircle: svg('<circle cx="12" cy="12" r="10"/><polyline points="8 12 12 16 16 12"/><line x1="12" y1="8" x2="12" y2="16"/>'),
   columns: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/><line x1="15" y1="3" x2="15" y2="21"/>'),
   moreHorizontal: svg('<circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>'),
+  sparkles: svg('<path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/>'),
+  wand: svg('<path d="M3 21l9-9"/><path d="M14 7l3 3"/><path d="M5 6h2"/><path d="M6 5v2"/><path d="M19 14h2"/><path d="M20 13v2"/><path d="M15 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>'),
+  messageSquare: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
 };

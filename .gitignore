@@ -6,6 +6,10 @@ node_modules/
 .bookmarks.json
 .profiles.json
 .layout.json
+.session-state.json
+.claude/scheduled_tasks.lock
+tmpr*.json
+claude-add-*.txt
 coverage/
 .playwright-mcp/
 docs/superpowers/
