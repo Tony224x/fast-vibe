@@ -3,6 +3,7 @@ import type { IPty } from 'node-pty';
 import * as fs from 'fs';
 import * as path from 'path';
 import { randomUUID } from 'crypto';
+import { execSync } from 'child_process';
 import type { WebSocket } from 'ws';
 
 import { matchStaticSuggestion } from './suggest-patterns';
@@ -111,6 +112,9 @@ export class PtyManager {
   // Buffer cap par slot, calibré selon l'engine actif. Kiro TUI a besoin de
   // plus pour préserver l'historique TUI complet entre rotations.
   maxBuffer: number;
+  // Cache de résolution de binaires (Windows : node-pty ne résout pas
+  // PATHEXT — il faut un path absolu ou l'extension exacte).
+  private _binaryCache: Map<string, string> = new Map();
   // Notification de mutation d'état (pour persistance .session-state.json)
   onStateChange?: () => void;
 
@@ -162,10 +166,10 @@ export class PtyManager {
     // qui sont plus simples à composer en shell que en argv.
     //
     // Pour le suggesteur (Claude headless) : utilise toujours le shell wrapper.
-    const launch = this._buildLaunch(workdir, isPilot, slot);
-
     let proc: IPty;
+    let launch: ReturnType<typeof this._buildLaunch>;
     try {
+      launch = this._buildLaunch(workdir, isPilot, slot);
       proc = pty.spawn(launch.shell, launch.args, {
         name: 'xterm-256color',
         cols: 80,
@@ -174,7 +178,21 @@ export class PtyManager {
         env: process.env as Record<string, string>,
       });
     } catch (e: unknown) {
-      log('spawn-error', `index=${index} ${(e as Error).message}`);
+      const msg = (e as Error).message || 'unknown error';
+      // Message contextuel — l'erreur "File not found:" de CreateProcess est
+      // cryptique sans indiquer ce qu'on tentait de lancer. On annote.
+      const annotated = `spawn failed: ${msg}`;
+      log('spawn-error', `index=${index} ${annotated}`);
+      // Notifier l'utilisateur dans le terminal (au lieu d'un slot vide
+      // silencieux). Marquer crashed pour stopper le retry automatique :
+      // une erreur de spawn est en général un problème permanent (binaire
+      // introuvable, perms, etc.) que le retry ne résoudra pas.
+      slot.crashed = true;
+      try {
+        if (slot.ws && slot.ws.readyState === 1) {
+          slot.ws.send(`\r\n\x1b[31m[fast-vibe] ${annotated}\x1b[0m\r\n`);
+        }
+      } catch { /* ws gone */ }
       return null;
     }
 
@@ -265,6 +283,35 @@ export class PtyManager {
     return proc;
   }
 
+  // Résout un binaire vers son path absolu (where.exe sur Windows, which
+  // ailleurs). Cache en mémoire pour ne pas refaire le subprocess à chaque
+  // spawn. Retourne null si introuvable.
+  //
+  // Pourquoi nécessaire : node-pty sur Windows utilise CreateProcess sans
+  // résolution PATHEXT — passer 'kiro-cli' (sans extension) plante avec
+  // 'File not found:'. Sur cette machine kiro-cli est .exe, ailleurs ça
+  // peut être .cmd / .ps1. Résolution dynamique via where.exe est la
+  // seule façon fiable.
+  private _resolveBinary(name: string): string | null {
+    if (this._binaryCache.has(name)) return this._binaryCache.get(name) || null;
+    try {
+      const tool = process.platform === 'win32' ? 'where.exe' : 'which';
+      const out = execSync(`${tool} ${name}`, {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000,
+      });
+      // where.exe peut retourner plusieurs lignes — on prend la première.
+      const first = out.split(/\r?\n/).map(s => s.trim()).find(s => s.length > 0);
+      if (first) {
+        this._binaryCache.set(name, first);
+        return first;
+      }
+    } catch { /* not found */ }
+    this._binaryCache.set(name, '');
+    return null;
+  }
+
   // Construit la commande à lancer pour un slot. Renvoie les args pty.spawn
   // + une éventuelle commande à taper via le shell parent (mode 'shell').
   private _buildLaunch(workdir: string, isPilot: boolean, slot: Slot): {
@@ -290,11 +337,20 @@ export class PtyManager {
           injectCmd: null,
         };
       }
-      // Sous Windows natif, le binaire peut être .cmd / .ps1 / .exe selon
-      // l'install. node-pty resout le PATH si on passe juste 'kiro-cli'.
-      // Si l'utilisateur a une install non-standard, il peut utiliser useWSL.
+
+      // Résolution explicite du binaire — cf. _resolveBinary.
+      // Sur cette machine c'est .exe, sur d'autres .cmd, etc.
+      const resolved = this._resolveBinary('kiro-cli');
+      if (!resolved) {
+        // Pas de fallback hasardeux : on log et on laisse le throw remonter
+        // au catch de spawn() avec un message explicite.
+        throw new Error(
+          'kiro-cli not found in PATH. Install Kiro CLI from https://kiro.dev or enable WSL mode in settings.'
+        );
+      }
+
       return {
-        shell: isWin ? 'kiro-cli.cmd' : 'kiro-cli',
+        shell: resolved,
         args: kiroArgs,
         cwd: workdir,
         mode: 'direct',
