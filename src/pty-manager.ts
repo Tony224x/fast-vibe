@@ -325,8 +325,19 @@ export class PtyManager {
 
     // ── Kiro : spawn direct ──
     if (this.engine === 'kiro') {
-      const kiroArgs = ['chat', '--tui'];
-      if (this.trustMode) kiroArgs.unshift('--trust-all-tools');
+      // Ordre des args : `kiro-cli chat [chat-options] --tui`
+      // --trust-all-tools (alias -a) est un flag de la sous-commande `chat`,
+      // pas un flag global → il DOIT venir après `chat` ou kiro-cli rejette
+      // avec "unexpected argument '--trust-all-tools' found".
+      //
+      // --agent-engine v2 est forcé : --tui ne fonctionne qu'avec v2 (Kiro
+      // refuse avec 'Conflicting options: --tui cannot be used with
+      // --agent-engine=v1' si la config utilisateur force v1). Le help dit
+      // que v2 est default, mais on ne fait pas confiance au default global
+      // pour ne pas péter quand l'utilisateur change sa config Kiro.
+      const kiroArgs: string[] = ['chat', '--agent-engine', 'v2'];
+      if (this.trustMode) kiroArgs.push('--trust-all-tools');
+      kiroArgs.push('--tui');
 
       if (this.useWSL && isWin) {
         return {
