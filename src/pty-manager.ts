@@ -9,8 +9,22 @@ import { matchStaticSuggestion } from './suggest-patterns';
 import type { Slot, Suggestion, SuggesteurState, TerminalStatus, LaunchOptions } from './types';
 
 export const MAX_BUFFER = 50 * 1024;
+// Kiro TUI redessine fréquemment (~10×/s avec spinners + status bars) avec
+// des séquences ANSI lourdes. On augmente la cible buffer pour ce moteur
+// afin de réduire les rotations et préserver l'historique au reattach.
+const MAX_BUFFER_KIRO = 200 * 1024;
 const WS_HIGH_WATER = 128 * 1024;
-export const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]|\x1b\].*?\x07|\x1b[()][0-9A-B]|\r/g;
+// ANSI escape sequences :
+//   - CSI:  ESC [ ... final-byte (0x40-0x7e) — séquences couleur, curseur, etc.
+//   - OSC:  ESC ] ... terminator (BEL=0x07 OU ST=ESC \\) — titre, hyperlinks, OSC 52
+//   - DCS:  ESC P ... ST — Device Control String (sixel, etc.)
+//   - APC:  ESC _ ... ST — Application Program Command (Kitty graphics)
+//   - PM:   ESC ^ ... ST — Privacy Message
+//   - charset: ESC ( B / ESC ) B — sélection de table
+//   - ESC =, ESC > — keypad mode
+//   - ESC #8 — DECALN (test fill)
+//   - solo \r (carriage return) — éliminé pour cohérence avec stripAnsi
+export const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[PX^_][^\x1b]*\x1b\\|\x1b[()][0-9A-B]|\x1b[=>]|\x1b#\d|\r/g;
 
 function safeWrite(proc: IPty | null, data: string): void {
   try {
@@ -94,6 +108,9 @@ export class PtyManager {
   logsEnabled: boolean;
   logsDir: string;
   autoRestart: boolean;
+  // Buffer cap par slot, calibré selon l'engine actif. Kiro TUI a besoin de
+  // plus pour préserver l'historique TUI complet entre rotations.
+  maxBuffer: number;
   // Notification de mutation d'état (pour persistance .session-state.json)
   onStateChange?: () => void;
 
@@ -109,6 +126,7 @@ export class PtyManager {
     this.logsEnabled = false;
     this.logsDir = '';
     this.autoRestart = true;
+    this.maxBuffer = MAX_BUFFER;
     // Suggesteur state
     this.suggesteur = null;
     this.suggestions = {};
@@ -128,21 +146,31 @@ export class PtyManager {
     if (slot.pty) return slot.pty;
 
     const workdir = cwd || this.cwd;
-    let shell: string, shellArgs: string[] = [];
-    if (this.useWSL && process.platform === 'win32') {
-      shell = 'wsl.exe';
-      shellArgs = ['--cd', workdir];
-    } else {
-      shell = process.platform === 'win32' ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
-    }
+    const isPilot = index === 0 && !this.noPilot;
+
+    // ── Stratégie de spawn par engine ──
+    //
+    // Pour Kiro (TUI lourd, pas de session id) : on spawn `kiro-cli` directement
+    // sans passer par un shell wrapper. Conséquences :
+    //  - onExit reflète exactement la fin du process Kiro (pas le shell parent)
+    //  - Pas de "retomber dans le shell" si Kiro plante : le slot est marqué
+    //    inactif et le retry est pertinent.
+    //  - Plus de prompt detection ($#>) qui peut fire sur du contenu Kiro.
+    //
+    // Pour Claude : on garde le shell parent à cause des aliases (doskey/alias)
+    // et de la commande complexe (--append-system-prompt-file, --session-id, etc.)
+    // qui sont plus simples à composer en shell que en argv.
+    //
+    // Pour le suggesteur (Claude headless) : utilise toujours le shell wrapper.
+    const launch = this._buildLaunch(workdir, isPilot, slot);
 
     let proc: IPty;
     try {
-      proc = pty.spawn(shell, shellArgs, {
+      proc = pty.spawn(launch.shell, launch.args, {
         name: 'xterm-256color',
         cols: 80,
         rows: 24,
-        cwd: this.useWSL ? undefined : workdir,
+        cwd: launch.cwd,
         env: process.env as Record<string, string>,
       });
     } catch (e: unknown) {
@@ -155,118 +183,217 @@ export class PtyManager {
     slot.chunks = [];
     slot.chunksTotalLen = 0;
     slot.joinedCache = '';
+    slot.strippedCache = '';
     slot.dirty = false;
-    const role = (index === 0 && !this.noPilot) ? 'pilot' : `worker-${index}`;
-    log('spawn', `${role} pid=${proc.pid} cwd=${workdir}`);
+    slot.crashed = false;
+    slot.wsDesynced = false;
+    const role = isPilot ? 'pilot' : `worker-${index}`;
+    log('spawn', `${role} pid=${proc.pid} cwd=${workdir} engine=${this.engine} mode=${launch.mode}`);
+
+    // Reset restartCount après 60s d'uptime stable. Évite que des crashes
+    // espacés (ex: une fois par heure) finissent par épuiser le budget retry.
+    if (slot.uptimeTimer) clearTimeout(slot.uptimeTimer);
+    slot.uptimeTimer = setTimeout(() => {
+      if (slot.pty === proc && slot.restartCount > 0) {
+        log('uptime-reset', `terminal=${index} pid=${proc.pid} restartCount ${slot.restartCount}→0`);
+        slot.restartCount = 0;
+      }
+    }, 60_000);
 
     proc.onData((data: string) => {
       slot.chunks.push(data);
       slot.chunksTotalLen += data.length;
       slot.dirty = true;
-      if (slot.chunksTotalLen > MAX_BUFFER || slot.chunks.length > 100) {
-        slot.joinedCache = slot.chunks.join('').slice(-MAX_BUFFER);
+      // Rotation : on déclenche uniquement quand on dépasse 1.5× la cible
+      // (au lieu de 1×) ou que le nombre de chunks devient pathologique
+      // (>200 — Kiro TUI peut spammer 50-100 micro-chunks par redraw).
+      // Réduit la fréquence des grosses concats sur le hot path TUI.
+      const rotateThreshold = this.maxBuffer + (this.maxBuffer >> 1);
+      if (slot.chunksTotalLen > rotateThreshold || slot.chunks.length > 200) {
+        slot.joinedCache = slot.chunks.join('').slice(-this.maxBuffer);
         slot.chunks = [slot.joinedCache];
         slot.chunksTotalLen = slot.joinedCache.length;
         slot.dirty = false;
+        slot.strippedCache = '';
       }
       if (this.logsEnabled && this.logsDir) {
         const stripped = data.replace(ANSI_RE, '');
         fs.appendFile(path.join(this.logsDir, `terminal-${index}.log`), stripped, () => {});
       }
       try {
-        if (slot.ws && slot.ws.readyState === 1 && slot.ws.bufferedAmount < WS_HIGH_WATER) {
-          slot.ws.send(data);
+        if (slot.ws && slot.ws.readyState === 1) {
+          if (slot.ws.bufferedAmount < WS_HIGH_WATER) {
+            // Si on a précédemment sauté des chunks, on resync en envoyant
+            // tout le buffer (qui inclut la chunk courante via slot.chunks).
+            if (slot.wsDesynced) {
+              slot.ws.send(this._getBuffer(slot));
+              slot.wsDesynced = false;
+            } else {
+              slot.ws.send(data);
+            }
+          } else {
+            // Backpressure haute : on note la désync sans dropper. Le buffer
+            // serveur (slot.chunks) garde tout, donc le replay au prochain
+            // envoi possible reconstitue correctement l'écran xterm.
+            slot.wsDesynced = true;
+          }
         }
       } catch { /* WS gone */ }
     });
 
-    // Auto-launch CLI — wait for shell prompt before sending command
-    const launchCmd = ((): string => {
-      const nl = (process.platform === 'win32' && !this.useWSL) ? '\r' : '\n';
-      const isPilot = index === 0 && !this.noPilot;
-
-      if (this.engine === 'kiro') {
-        return (this.trustMode ? 'kiro-cli chat --trust-all-tools --tui' : 'kiro-cli chat --tui') + nl;
-      } else {
-        const claudeCmd = this.trustMode ? 'claude --dangerously-skip-permissions' : 'claude';
-        const alias = process.platform === 'win32' && !this.useWSL
-          ? `doskey c=${claudeCmd} $*`
-          : `alias c="${claudeCmd}"`;
-
-        // Stratégie sessions persistantes :
-        //  - 1er lancement (slot.resume falsy) : --session-id <uuid> pour
-        //    forcer un id qu'on contrôle, qu'on persistera ensuite.
-        //  - Après reboot (slot.resume true) : --resume <uuid> reprend la
-        //    conversation existante.
-        const sid = slot.sessionId;
-        const sessionFlag = sid
-          ? (slot.resume ? `--resume ${sid}` : `--session-id ${sid}`)
-          : '';
-
-        let cmd = claudeCmd;
-        if (isPilot) {
-          const promptPath = PILOT_PROMPT_FILE.replace(/\\/g, '/');
-          cmd = `${claudeCmd} --disallowedTools Agent --append-system-prompt-file "${promptPath}"`;
-        }
-        if (sessionFlag) cmd = `${cmd} ${sessionFlag}`;
-
-        // Une fois le `claude` initial sortie, le prochain reboot reprend la
-        // conversation existante. On flippe `resume` ici pour que tout
-        // re-spawn (auto-restart, restart manuel, restoreAll) utilise --resume.
-        if (sid && !slot.resume) slot.resume = true;
-
-        return alias + nl + cmd + nl;
-      }
-    })();
-
-    let launched = false;
-    const onData = (data: string): void => {
-      if (launched) return;
-      // Detect shell prompt: $ or # or > at end of line
-      if (/[$#>]\s*$/.test(data)) {
-        launched = true;
-        launchDisposable.dispose();
-        safeWrite(proc, launchCmd);
-      }
-    };
-    const launchDisposable = proc.onData(onData);
-
-    // Fallback timeout in case prompt detection misses
-    setTimeout(() => {
-      if (!launched && slot.pty) {
-        launched = true;
-        safeWrite(proc, launchCmd);
-      }
-      launchDisposable.dispose();
-    }, 5000);
+    // Si le launch a une commande à taper après le prompt shell (mode 'shell'),
+    // on installe le détecteur de prompt. Sinon (mode 'direct'), le binaire
+    // tourne déjà dans le PTY et il n'y a rien à injecter.
+    if (launch.injectCmd) {
+      this._injectShellCommand(proc, launch.injectCmd);
+    }
 
     proc.onExit(({ exitCode }: { exitCode: number }) => {
       log('exit', `${role} pid=${proc.pid} code=${exitCode}`);
       if (slot.pty === proc) {
         slot.pty = null;
       }
+      if (slot.uptimeTimer) { clearTimeout(slot.uptimeTimer); slot.uptimeTimer = null; }
       try {
         if (slot.ws && slot.ws.readyState === 1) {
           slot.ws.send(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`);
         }
       } catch { /* WS gone */ }
-      // Auto-restart on unexpected exit
-      if (this.autoRestart && !slot.removed && exitCode !== 0 && slot.restartCount < 3) {
-        slot.restartCount++;
-        // Fallback : si --resume vient d'échouer (1ère tentative de la
-        // séquence de retry), on bascule en --session-id pour ne pas boucler
-        // sur une session corrompue côté claude. La conversation est perdue
-        // mais le grid reste stable et la nouvelle session reprend l'UUID.
-        if (slot.resume && slot.sessionId && slot.restartCount === 1) {
-          log('resume-failed', `terminal=${index} session=${slot.sessionId} → fallback to fresh`);
-          slot.resume = false;
-        }
-        log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in 3s`);
-        setTimeout(() => { this.spawn(index, this.cwd); }, 3000);
-      }
+      this._scheduleRestart(index, slot, exitCode);
     });
 
     return proc;
+  }
+
+  // Construit la commande à lancer pour un slot. Renvoie les args pty.spawn
+  // + une éventuelle commande à taper via le shell parent (mode 'shell').
+  private _buildLaunch(workdir: string, isPilot: boolean, slot: Slot): {
+    shell: string;
+    args: string[];
+    cwd: string | undefined;
+    mode: 'direct' | 'shell';
+    injectCmd: string | null;
+  } {
+    const isWin = process.platform === 'win32';
+
+    // ── Kiro : spawn direct ──
+    if (this.engine === 'kiro') {
+      const kiroArgs = ['chat', '--tui'];
+      if (this.trustMode) kiroArgs.unshift('--trust-all-tools');
+
+      if (this.useWSL && isWin) {
+        return {
+          shell: 'wsl.exe',
+          args: ['--cd', workdir, '--', 'kiro-cli', ...kiroArgs],
+          cwd: undefined,
+          mode: 'direct',
+          injectCmd: null,
+        };
+      }
+      // Sous Windows natif, le binaire peut être .cmd / .ps1 / .exe selon
+      // l'install. node-pty resout le PATH si on passe juste 'kiro-cli'.
+      // Si l'utilisateur a une install non-standard, il peut utiliser useWSL.
+      return {
+        shell: isWin ? 'kiro-cli.cmd' : 'kiro-cli',
+        args: kiroArgs,
+        cwd: workdir,
+        mode: 'direct',
+        injectCmd: null,
+      };
+    }
+
+    // ── Claude : shell wrapper (alias + flags complexes) ──
+    let shell: string;
+    let shellArgs: string[] = [];
+    let cwd: string | undefined;
+    if (this.useWSL && isWin) {
+      shell = 'wsl.exe';
+      shellArgs = ['--cd', workdir];
+      cwd = undefined;
+    } else {
+      shell = isWin ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
+      cwd = workdir;
+    }
+
+    const nl = (isWin && !this.useWSL) ? '\r' : '\n';
+    const claudeCmd = this.trustMode ? 'claude --dangerously-skip-permissions' : 'claude';
+    const alias = isWin && !this.useWSL ? `doskey c=${claudeCmd} $*` : `alias c="${claudeCmd}"`;
+
+    // Stratégie sessions persistantes :
+    //  - 1er lancement : --session-id <uuid>
+    //  - Reboot : --resume <uuid>
+    const sid = slot.sessionId;
+    const sessionFlag = sid
+      ? (slot.resume ? `--resume ${sid}` : `--session-id ${sid}`)
+      : '';
+
+    let cmd = claudeCmd;
+    if (isPilot) {
+      const promptPath = PILOT_PROMPT_FILE.replace(/\\/g, '/');
+      cmd = `${claudeCmd} --disallowedTools Agent --append-system-prompt-file "${promptPath}"`;
+    }
+    if (sessionFlag) cmd = `${cmd} ${sessionFlag}`;
+
+    if (sid && !slot.resume) slot.resume = true;
+
+    return {
+      shell,
+      args: shellArgs,
+      cwd,
+      mode: 'shell',
+      injectCmd: alias + nl + cmd + nl,
+    };
+  }
+
+  // Détecte le prompt shell ($#>) et injecte la commande. Fallback timeout 5s.
+  private _injectShellCommand(proc: IPty, cmd: string): void {
+    let launched = false;
+    const onData = (data: string): void => {
+      if (launched) return;
+      if (/[$#>]\s*$/.test(data)) {
+        launched = true;
+        launchDisposable.dispose();
+        safeWrite(proc, cmd);
+      }
+    };
+    const launchDisposable = proc.onData(onData);
+    setTimeout(() => {
+      if (!launched) {
+        launched = true;
+        try { safeWrite(proc, cmd); } catch { /* PTY gone */ }
+      }
+      launchDisposable.dispose();
+    }, 5000);
+  }
+
+  // Replanifie un restart après exit non-souhaité. Backoff exponentiel
+  // 3s → 6s → 12s, puis arrêt définitif (slot.crashed = true).
+  private _scheduleRestart(index: number, slot: Slot, exitCode: number): void {
+    if (!this.autoRestart || slot.removed || exitCode === 0) return;
+
+    if (slot.restartCount >= 3) {
+      slot.crashed = true;
+      log('crashed', `terminal=${index} retry budget exhausted (3 attempts)`);
+      try {
+        if (slot.ws && slot.ws.readyState === 1) {
+          slot.ws.send(`\r\n\x1b[91m[Crashed: 3 restart attempts failed. Click Restart to retry.]\x1b[0m\r\n`);
+        }
+      } catch { /* WS gone */ }
+      return;
+    }
+
+    slot.restartCount++;
+    // Fallback Claude : si --resume vient d'échouer (1ère tentative), on
+    // bascule sur --session-id pour ne pas boucler sur une session corrompue.
+    if (slot.resume && slot.sessionId && slot.restartCount === 1) {
+      log('resume-failed', `terminal=${index} session=${slot.sessionId} → fallback to fresh`);
+      slot.resume = false;
+    }
+    const delayMs = Math.min(3000 * Math.pow(2, slot.restartCount - 1), 30_000);
+    log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in ${delayMs}ms`);
+    setTimeout(() => {
+      if (!slot.removed) this.spawn(index, this.cwd);
+    }, delayMs);
   }
 
   attach(index: number, ws: WebSocket): void {
@@ -334,20 +461,45 @@ export class PtyManager {
   }
 
   resize(index: number, cols: number, rows: number): void {
-    if (index < this.slots.length && this.slots[index].pty) {
-      try { this.slots[index].pty!.resize(cols, rows); } catch { /* PTY gone */ }
+    if (index >= this.slots.length || !this.slots[index].pty) return;
+    const proc = this.slots[index].pty!;
+    try { proc.resize(cols, rows); } catch { /* PTY gone */ }
+    // ConPTY (Windows) a un bug connu : le child process ne reçoit pas
+    // toujours SIGWINCH au premier resize, surtout sous TUI. Un second
+    // resize 50ms après force le child à redessiner et règle la majorité
+    // des artefacts visuels Kiro après split/drag.
+    if (process.platform === 'win32') {
+      setTimeout(() => {
+        if (this.slots[index] && this.slots[index].pty === proc) {
+          try { proc.resize(cols, rows); } catch { /* PTY gone */ }
+        }
+      }, 50);
     }
   }
 
   restart(index: number): void {
-    this.kill(index);
-    this.spawn(index, this.cwd);
+    if (index >= this.slots.length) return;
     const slot = this.slots[index];
-    try {
-      if (slot.ws && slot.ws.readyState === 1 && slot.chunksTotalLen > 0) {
-        slot.ws.send(this._getBuffer(slot));
-      }
-    } catch { /* WS gone */ }
+    // Restart manuel = reset l'état crashed + le compteur. L'utilisateur
+    // demande explicitement à recommencer, on redonne 3 tentatives.
+    slot.crashed = false;
+    slot.restartCount = 0;
+    const previous = slot.pty;
+    this.kill(index);
+    // Petit délai pour laisser ConPTY (Windows) finir le cleanup du PTY
+    // précédent avant qu'un nouveau prenne sa place. Sans ça on peut avoir
+    // 2 PTYs share le même slot pendant ~100ms, et le onExit du précédent
+    // (déjà en vol) flippe slot.pty à null après le nouveau spawn.
+    const delay = previous && process.platform === 'win32' ? 100 : 0;
+    setTimeout(() => {
+      if (slot.removed) return;
+      this.spawn(index, this.cwd);
+      try {
+        if (slot.ws && slot.ws.readyState === 1 && slot.chunksTotalLen > 0) {
+          slot.ws.send(this._getBuffer(slot));
+        }
+      } catch { /* WS gone */ }
+    }, delay);
   }
 
   sendInput(index: number, text: string): boolean {
@@ -364,7 +516,12 @@ export class PtyManager {
     } else {
       safeWrite(slot.pty, text.replace(/\n/g, '\r'));
     }
-    setTimeout(() => {
+    // Clear tout pendingEnter précédent : si l'utilisateur enchaîne plusieurs
+    // sends rapidement, on ne veut pas accumuler des Enter en rafale qui
+    // submitteraient dans le désordre côté TUI.
+    if (slot.pendingEnterTimer) clearTimeout(slot.pendingEnterTimer);
+    slot.pendingEnterTimer = setTimeout(() => {
+      slot.pendingEnterTimer = null;
       safeWrite(slot.pty, '\r');
     }, 100);
     return true;
@@ -383,6 +540,8 @@ export class PtyManager {
     if (slot.dirty) {
       slot.joinedCache = slot.chunks.join('');
       slot.dirty = false;
+      // Le buffer brut a changé → on invalide le cache strippé.
+      slot.strippedCache = '';
     }
     return slot.joinedCache;
   }
@@ -391,10 +550,16 @@ export class PtyManager {
     if (index >= this.slots.length) return '';
     const slot = this.slots[index];
     if (slot.chunksTotalLen === 0) return '';
-    const raw = this._getBuffer(slot);
-    // Slice first (cheap), then strip ANSI on smaller string (~25x less work)
-    const tail = raw.slice(-(lastN + 1024));
-    return tail.replace(ANSI_RE, '').slice(-lastN);
+    // Cache strippé : on ne re-parse les ANSI que si le buffer brut a changé
+    // depuis le dernier appel. Sur un Kiro TUI qui spamme des frames mais
+    // dont le pilot poll régulièrement, c'est ~100× plus rapide.
+    // Important : invalider aussi quand `dirty=true` (du nouveau contenu est
+    // arrivé même si on n'a pas appelé _getBuffer entre temps).
+    if (slot.dirty || !slot.strippedCache) {
+      const raw = this._getBuffer(slot);
+      slot.strippedCache = raw.replace(ANSI_RE, '');
+    }
+    return slot.strippedCache.slice(-lastN);
   }
 
   // Launch 1 pilot + N workers
@@ -407,6 +572,7 @@ export class PtyManager {
     this.useWSL = !!opts.useWSL;
     this.suggestMode = opts.suggestMode || 'off';
     this.logsEnabled = !!opts.logsEnabled;
+    this.maxBuffer = this.engine === 'kiro' ? MAX_BUFFER_KIRO : MAX_BUFFER;
     if (this.logsEnabled) {
       this.logsDir = path.join(this.cwd, 'logs');
       if (!fs.existsSync(this.logsDir)) fs.mkdirSync(this.logsDir, { recursive: true });
@@ -421,10 +587,14 @@ export class PtyManager {
     // après reboot pour reprendre la même conversation.
     this.slots = Array.from({ length: this.count }, (): Slot => ({
       pty: null, ws: null, startedAt: null,
-      chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+      chunks: [], chunksTotalLen: 0, joinedCache: '', strippedCache: '', dirty: false,
       restartCount: 0,
       sessionId: this.engine === 'claude' ? randomUUID() : null,
       resume: false,
+      crashed: false,
+      wsDesynced: false,
+      pendingEnterTimer: null,
+      uptimeTimer: null,
     }));
 
     // Update pilot prompt with correct worker count (only for claude with pilot)
@@ -457,6 +627,7 @@ export class PtyManager {
     this.noPilot = !!state.noPilot;
     this.trustMode = !!state.trustMode;
     this.useWSL = !!state.useWSL;
+    this.maxBuffer = this.engine === 'kiro' ? MAX_BUFFER_KIRO : MAX_BUFFER;
     // Slots indexed by position; on recrée la grille telle que persistée
     // (workers déjà supprimés inclus comme tombstones pour préserver les indices)
     const maxIndex = state.workers.reduce((m, w) => Math.max(m, w.index), -1);
@@ -465,11 +636,15 @@ export class PtyManager {
       const w = state.workers.find(x => x.index === i);
       return {
         pty: null, ws: null, startedAt: null,
-        chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+        chunks: [], chunksTotalLen: 0, joinedCache: '', strippedCache: '', dirty: false,
         restartCount: 0,
         sessionId: w?.sessionId ?? null,
         resume: !!(w?.sessionId),
         removed: w?.removed,
+        crashed: false,
+        wsDesynced: false,
+        pendingEnterTimer: null,
+        uptimeTimer: null,
       };
     });
 
@@ -494,10 +669,14 @@ export class PtyManager {
     const newIndex = this.slots.length;
     this.slots.push({
       pty: null, ws: null, startedAt: null,
-      chunks: [], chunksTotalLen: 0, joinedCache: '', dirty: false,
+      chunks: [], chunksTotalLen: 0, joinedCache: '', strippedCache: '', dirty: false,
       restartCount: 0,
       sessionId: this.engine === 'claude' ? randomUUID() : null,
       resume: false,
+      crashed: false,
+      wsDesynced: false,
+      pendingEnterTimer: null,
+      uptimeTimer: null,
     });
     this.count = this.slots.length;
     this.spawn(newIndex, this.cwd);
@@ -527,11 +706,15 @@ export class PtyManager {
       try { slot.pty.kill(); } catch (e: unknown) { log('kill-error', `terminal=${index} ${(e as Error).message}`); }
       slot.pty = null;
     }
+    if (slot.pendingEnterTimer) { clearTimeout(slot.pendingEnterTimer); slot.pendingEnterTimer = null; }
+    if (slot.uptimeTimer) { clearTimeout(slot.uptimeTimer); slot.uptimeTimer = null; }
     slot.startedAt = null;
     slot.chunks = [];
     slot.chunksTotalLen = 0;
     slot.joinedCache = '';
+    slot.strippedCache = '';
     slot.dirty = false;
+    slot.wsDesynced = false;
   }
 
   killAll(): void {
@@ -587,8 +770,9 @@ export class PtyManager {
       sg.chunks.push(data);
       sg.chunksTotalLen += data.length;
       sg.dirty = true;
-      if (sg.chunksTotalLen > MAX_BUFFER || sg.chunks.length > 100) {
-        sg.joinedCache = sg.chunks.join('').slice(-MAX_BUFFER);
+      const rotateThreshold = this.maxBuffer + (this.maxBuffer >> 1);
+      if (sg.chunksTotalLen > rotateThreshold || sg.chunks.length > 200) {
+        sg.joinedCache = sg.chunks.join('').slice(-this.maxBuffer);
         sg.chunks = [sg.joinedCache];
         sg.chunksTotalLen = sg.joinedCache.length;
         sg.dirty = false;
@@ -777,6 +961,7 @@ export class PtyManager {
         role: (i === 0 && !this.noPilot) ? 'pilot' as const : 'worker' as const,
         suggestion: this.suggestions[i] || null,
         removed: !!slot.removed,
+        crashed: !!slot.crashed,
       }))
       .filter(s => !s.removed)
       .map(({ removed: _r, ...rest }) => rest);

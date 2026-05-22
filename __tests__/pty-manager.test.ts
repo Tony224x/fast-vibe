@@ -248,8 +248,116 @@ describe('PtyManager', () => {
       expect('\x1b]0;title\x07'.replace(ANSI_RE, '')).toBe('');
     });
 
+    test('matches OSC terminated by ST (ESC backslash)', () => {
+      // OSC 11 (background color query) terminé par ST — utilisé par Kiro TUI
+      expect('\x1b]11;rgb:0000/0000/0000\x1b\\'.replace(ANSI_RE, '')).toBe('');
+      // OSC 8 (hyperlink) terminé par ST
+      expect('\x1b]8;;https://example.com\x1b\\link\x1b]8;;\x1b\\'.replace(ANSI_RE, '')).toBe('link');
+    });
+
+    test('matches DCS sequences (sixel etc.)', () => {
+      expect('\x1bP1;2;3q...\x1b\\'.replace(ANSI_RE, '')).toBe('');
+    });
+
+    test('matches keypad mode and DECALN', () => {
+      expect('\x1b='.replace(ANSI_RE, '')).toBe('');
+      expect('\x1b>'.replace(ANSI_RE, '')).toBe('');
+      expect('\x1b#8'.replace(ANSI_RE, '')).toBe('');
+    });
+
     test('does not match normal text', () => {
       expect('hello world'.replace(ANSI_RE, '')).toBe('hello world');
+    });
+  });
+
+  describe('Sprint 1 — auto-restart backoff', () => {
+    test('restart() resets crashed flag and restartCount', () => {
+      mgr.launchAll('/tmp', 1);
+      mgr.slots[0].crashed = true;
+      mgr.slots[0].restartCount = 3;
+      mgr.restart(0);
+      expect(mgr.slots[0].crashed).toBe(false);
+      expect(mgr.slots[0].restartCount).toBe(0);
+    });
+
+    test('getStatus exposes crashed flag', () => {
+      mgr.launchAll('/tmp', 1);
+      mgr.slots[0].crashed = true;
+      const status = mgr.getStatus();
+      expect(status[0].crashed).toBe(true);
+    });
+  });
+
+  describe('Sprint 1 — sendInput pendingEnter clear', () => {
+    test('multiple rapid sendInput clears previous pendingEnterTimer', () => {
+      jest.useFakeTimers();
+      mgr.launchAll('/tmp', 1);
+      mgr.sendInput(0, 'first');
+      const timer1 = mgr.slots[0].pendingEnterTimer;
+      expect(timer1).toBeTruthy();
+      mgr.sendInput(0, 'second');
+      const timer2 = mgr.slots[0].pendingEnterTimer;
+      expect(timer2).toBeTruthy();
+      expect(timer2).not.toBe(timer1);
+      jest.useRealTimers();
+    });
+
+    test('kill() clears pendingEnterTimer', () => {
+      mgr.launchAll('/tmp', 1);
+      mgr.sendInput(0, 'hello');
+      expect(mgr.slots[0].pendingEnterTimer).toBeTruthy();
+      mgr.kill(0);
+      expect(mgr.slots[0].pendingEnterTimer).toBeNull();
+    });
+  });
+
+  describe('Sprint 2 — strippedCache in getOutput', () => {
+    test('reuses strippedCache between calls without re-stripping', () => {
+      mgr.launchAll('/tmp', 1);
+      const slot = mgr.slots[0] as any;
+      slot.chunks = ['\x1b[31mred\x1b[0m text'];
+      slot.chunksTotalLen = slot.chunks[0].length;
+      slot.joinedCache = slot.chunks[0];
+      slot.dirty = false;
+      slot.strippedCache = '';
+
+      const out1 = mgr.getOutput(0, 100);
+      expect(out1).toBe('red text');
+      // Le cache est rempli
+      expect(slot.strippedCache).toBe('red text');
+
+      // Second appel : si on mute strippedCache directement, on doit récupérer
+      // la nouvelle valeur (preuve que le cache est utilisé sans rebuild).
+      slot.strippedCache = 'cached value';
+      const out2 = mgr.getOutput(0, 100);
+      expect(out2).toBe('cached value');
+    });
+
+    test('invalidates strippedCache when buffer is dirty', () => {
+      mgr.launchAll('/tmp', 1);
+      const slot = mgr.slots[0] as any;
+      slot.chunks = ['hello'];
+      slot.chunksTotalLen = 5;
+      slot.joinedCache = '';
+      slot.dirty = true;
+      slot.strippedCache = 'stale';
+
+      // Appelle _getBuffer indirectement via getOutput → invalide strippedCache
+      mgr.getOutput(0, 100);
+      // Le cache a été invalidé puis re-rempli avec la valeur fraîche
+      expect(slot.strippedCache).toBe('hello');
+    });
+  });
+
+  describe('Sprint 2 — engine-aware maxBuffer', () => {
+    test('claude engine uses default MAX_BUFFER', () => {
+      mgr.launchAll('/tmp', 1, { engine: 'claude' });
+      expect(mgr.maxBuffer).toBe(MAX_BUFFER);
+    });
+
+    test('kiro engine uses larger buffer', () => {
+      mgr.launchAll('/tmp', 1, { engine: 'kiro' });
+      expect(mgr.maxBuffer).toBeGreaterThan(MAX_BUFFER);
     });
   });
 

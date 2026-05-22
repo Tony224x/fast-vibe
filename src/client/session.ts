@@ -1,6 +1,6 @@
 import { terminals, noPilot, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState, sessionTimerInterval, launchTimestamp } from './state';
 import { postJson, debounce } from './utils';
-import { createTerminal, setFocused, scheduleFitAll, fitAll, termActivity, receivingTimers } from './terminal';
+import { createTerminal, setFocused, scheduleFitAll, fitAll, termActivity, receivingTimers, resetWsReconnectAttempts } from './terminal';
 import { togglePreview, loadPreview, toggleZen } from './preview';
 import { initSplitters } from './ui-helpers';
 import { renderWelcomeProjects } from './bookmarks';
@@ -208,11 +208,17 @@ export async function stopSession(): Promise<void> {
 export function destroyTerminals(): void {
   terminals.forEach((t) => {
     if (t) {
+      // Abort = ferme la WS courante + annule le reconnect en attente +
+      // détache tous les addEventListener attachés via signal (mousedown
+      // sur container, click sur scrollBtn). Pas de leak DOM.
+      t.abortController.abort();
       if (t.ws) t.ws.close();
       t.term.dispose();
     }
   });
   terminals.length = 0;
+  // Reset le backoff WS pour que le prochain launch démarre à 0 retry.
+  resetWsReconnectAttempts();
   // Clean up auto-focus timers
   for (const key of Object.keys(termActivity)) {
     clearTimeout(termActivity[Number(key)].timer!);

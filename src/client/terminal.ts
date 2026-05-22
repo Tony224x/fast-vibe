@@ -12,6 +12,16 @@ import { ICONS } from './icons';
 
 const wsReconnectAttempts: Record<number, number> = {};
 
+// Réinitialise les compteurs de retry. Appelé au stop pour ne pas pénaliser
+// le prochain launch avec les attempts hérités d'une session précédente.
+export function resetWsReconnectAttempts(index?: number): void {
+  if (index == null) {
+    for (const k of Object.keys(wsReconnectAttempts)) delete wsReconnectAttempts[Number(k)];
+  } else {
+    delete wsReconnectAttempts[index];
+  }
+}
+
 // ── Activity Indicator ──
 
 export const receivingTimers: Record<number, ReturnType<typeof setTimeout>> = {};
@@ -139,11 +149,15 @@ export function updatePaneDot(index: number, alive: boolean): void {
 }
 
 // ── Auto-focus on task completion ──
-
+//
+// Patterns testés UNIQUEMENT contre la dernière ligne non-vide du buffer
+// strippé (cf. detectTaskDone). Évite les faux positifs sur du texte qui
+// contient `❯` au milieu (commentaire de code, output Kiro intermédiaire,
+// ANSI mal strippée).
 const DONE_PATTERNS: RegExp[] = [
-  /\u276f\s*$/m,
-  /kiro>\s*$/im,
-  /\$\s*$/m,
+  /^❯\s*$/,
+  /^kiro>\s*$/i,
+  /^\$\s*$/,
 ];
 
 export const termActivity: Record<number, { timer: ReturnType<typeof setTimeout> | null; chunks: number; buffer: string }> = {};
@@ -161,8 +175,13 @@ export function detectTaskDone(index: number, data: string): void {
     const clean = stripAnsi(act.buffer).trim();
     act.chunks = 0;
     act.buffer = '';
+    // Extraction de la dernière ligne non-vide pour test strict (vs scan
+    // global qui matchait au milieu du buffer).
+    const lines = clean.split(/\n/);
+    const lastLine = lines.reverse().find(l => l.trim().length > 0)?.trim() ?? '';
+    if (!lastLine) return;
     for (const pat of DONE_PATTERNS) {
-      if (pat.test(clean)) {
+      if (pat.test(lastLine)) {
         const label = (index === 0 && !noPilot) ? 'Pilot' : (noPilot ? `Worker ${index + 1}` : `Worker ${index}`);
         notifyTaskDone(label);
         if (Date.now() - lastUserInputAt > 3000) setFocused(index);
@@ -182,11 +201,12 @@ export function detectTaskDone(index: number, data: string): void {
 
 // ── WebSocket ──
 
-export function connectWebSocket(index: number, term: InstanceType<typeof Terminal>): WebSocket {
+export function connectWebSocket(index: number, term: InstanceType<typeof Terminal>, signal?: AbortSignal): WebSocket {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const ws = new WebSocket(`${protocol}//${location.host}/ws?terminal=${index}`);
 
   ws.onmessage = (e: MessageEvent) => {
+    if (signal?.aborted) return;
     const data = typeof e.data === 'string' ? e.data : textDecoder.decode(e.data);
     term.write(data);
     markReceiving(index, true);
@@ -200,23 +220,37 @@ export function connectWebSocket(index: number, term: InstanceType<typeof Termin
     if (t && autoFollow && t.followMode) term.scrollToBottom();
   };
   ws.onopen = () => {
-    wsReconnectAttempts[index] = 0;
+    // Reset le compteur de retry à chaque connexion réussie : un terminal
+    // qui se reconnecte après un long down ne doit pas pénaliser le délai
+    // suivant si la prochaine déconnexion est rapide.
+    delete wsReconnectAttempts[index];
     ws.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
     updatePaneDot(index, true);
   };
   ws.onclose = () => {
     updatePaneDot(index, false);
-    if (!launched) return;
+    if (!launched || signal?.aborted) return;
     const attempt = wsReconnectAttempts[index] || 0;
     const delay = Math.min(1500 * Math.pow(2, attempt), 30000);
     wsReconnectAttempts[index] = attempt + 1;
     term.write('\r\n\x1b[90m[Reconnecting...]\x1b[0m\r\n');
     setTimeout(() => {
+      if (signal?.aborted) return;
       const t = terminals[index];
-      if (t && launched) t.ws = connectWebSocket(index, term);
+      if (t && launched) t.ws = connectWebSocket(index, term, signal);
     }, delay);
   };
   ws.onerror = () => {};
+
+  // Si le terminal est détruit avant que la WS soit ouverte/utilisée, on
+  // ferme proprement pour ne pas laisser une connexion orpheline qui
+  // continuerait à tenter de reconnect.
+  if (signal) {
+    signal.addEventListener('abort', () => {
+      try { ws.close(); } catch { /* already closed */ }
+    }, { once: true });
+  }
+
   return ws;
 }
 
@@ -242,6 +276,13 @@ export function createTerminal(index: number): void {
   term.open(container);
   requestAnimationFrame(() => fitAddon.fit());
 
+  // AbortController qui sera abort() dans destroyTerminals : tous les
+  // addEventListener attachés ci-dessous l'utilisent comme signal pour
+  // s'auto-déconnecter d'un coup, sans nécessiter de tracker chaque
+  // listener individuellement.
+  const abortController = new AbortController();
+  const signal = abortController.signal;
+
   // Scroll-to-bottom button
   const scrollBtn = document.createElement('button');
   scrollBtn.className = 'btn-scroll-bottom hidden';
@@ -252,7 +293,7 @@ export function createTerminal(index: number): void {
     if (t) t.followMode = true;
     term.scrollToBottom();
     scrollBtn.classList.add('hidden');
-  });
+  }, { signal });
   container.appendChild(scrollBtn);
 
   term.onScroll(() => {
@@ -283,7 +324,7 @@ export function createTerminal(index: number): void {
     return true;
   });
 
-  const ws = connectWebSocket(index, term);
+  const ws = connectWebSocket(index, term, signal);
 
   term.onData((data: string) => {
     const t = terminals[index];
@@ -291,6 +332,6 @@ export function createTerminal(index: number): void {
     setState('lastUserInputAt', Date.now());
   });
 
-  container.addEventListener('mousedown', () => setFocused(index));
-  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: autoFollow };
+  container.addEventListener('mousedown', () => setFocused(index), { signal });
+  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: autoFollow, abortController };
 }

@@ -51,21 +51,40 @@ function persistSessionState(): void {
   // Ne persiste que si une session est effectivement active (au moins un slot
   // avec sessionId). Sinon on n'écrit pas pour ne pas créer un fichier vide.
   if (ptyManager.slots.length === 0) return;
-  const state: SessionState = {
-    cwd: ptyManager.cwd,
-    engine: ptyManager.engine,
-    noPilot: ptyManager.noPilot,
-    trustMode: ptyManager.trustMode,
-    useWSL: ptyManager.useWSL,
-    workers: ptyManager.slots.map((s, i) => ({
-      index: i,
-      sessionId: s.sessionId ?? null,
-      removed: s.removed,
-    })),
-  };
-  fs.writeFile(SESSION_STATE_FILE, JSON.stringify(state, null, 2), (err) => {
-    if (err) console.error('[session-state] write error:', err.message);
-  });
+  schedulePersistSessionState();
+}
+
+// Debounce 500ms + sérialisation des écritures fs.writeFile pour éviter les
+// races de concurrent writes (8 workers qui spawn en parallèle déclenchent
+// 8 mutations onStateChange en cascade → 8 writes simultanés au même fichier
+// → JSON tronqué possible).
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistChain: Promise<void> = Promise.resolve();
+
+function schedulePersistSessionState(): void {
+  if (persistTimer) return;
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    const state: SessionState = {
+      cwd: ptyManager.cwd,
+      engine: ptyManager.engine,
+      noPilot: ptyManager.noPilot,
+      trustMode: ptyManager.trustMode,
+      useWSL: ptyManager.useWSL,
+      workers: ptyManager.slots.map((s, i) => ({
+        index: i,
+        sessionId: s.sessionId ?? null,
+        removed: s.removed,
+      })),
+    };
+    const payload = JSON.stringify(state, null, 2);
+    persistChain = persistChain.then(() => new Promise<void>((resolve) => {
+      fs.writeFile(SESSION_STATE_FILE, payload, (err) => {
+        if (err) console.error('[session-state] write error:', err.message);
+        resolve();
+      });
+    }));
+  }, 500);
 }
 
 function clearSessionState(): void {
@@ -305,12 +324,13 @@ app.delete('/api/terminal/:id', (req: Request, res: Response) => {
 // ── Rate limiter for terminal send ──
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-setInterval(() => {
+const rateLimitCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of rateLimitMap) {
     if (entry.resetAt < now) rateLimitMap.delete(ip);
   }
 }, 60_000);
+rateLimitCleanupTimer.unref?.();
 
 app.post('/api/terminal/:id/send', (req: Request, res: Response) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -400,10 +420,11 @@ app.post('/api/batch/clear', (_req: Request, res: Response) => {
 // cache prompt (~2-3s). Aucune interaction avec les workers / pilot.
 
 const improveLimiter = new Map<string, { count: number; resetAt: number }>();
-setInterval(() => {
+const improveLimiterCleanupTimer = setInterval(() => {
   const now = Date.now();
   for (const [ip, e] of improveLimiter) if (e.resetAt < now) improveLimiter.delete(ip);
 }, 60_000);
+improveLimiterCleanupTimer.unref?.();
 
 app.post('/api/improve-prompt', async (req: Request, res: Response) => {
   const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -519,6 +540,28 @@ app.get('/api/search', (req: Request, res: Response) => {
 
 // ── WebSocket ──
 
+// Heartbeat : on tag chaque ws avec _isAlive, ping toutes les 30s. Si on
+// n'a pas reçu de pong d'une connexion entre deux pings, on terminate —
+// ça permet de nettoyer les connexions zombies (NAT timeout, fermeture
+// brutale du client) qui sinon resteraient attachées au slot indéfiniment
+// avec des slot.ws.send() partant dans le vide.
+const HEARTBEAT_INTERVAL_MS = 30_000;
+type WsAlive = WebSocket & { _isAlive?: boolean };
+
+const heartbeatTimer = setInterval(() => {
+  wss.clients.forEach((rawWs) => {
+    const ws = rawWs as WsAlive;
+    if (ws._isAlive === false) {
+      logServer('ws-zombie-terminate', `client did not pong in ${HEARTBEAT_INTERVAL_MS}ms`);
+      try { ws.terminate(); } catch { /* already gone */ }
+      return;
+    }
+    ws._isAlive = false;
+    try { ws.ping(); } catch { /* ws closed between checks */ }
+  });
+}, HEARTBEAT_INTERVAL_MS);
+heartbeatTimer.unref?.();
+
 wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
   // CSWSH protection: reject cross-origin WebSocket connections
   const origin = req.headers.origin;
@@ -537,6 +580,10 @@ wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
     ws.close(4000, 'Invalid terminal index');
     return;
   }
+
+  // Heartbeat init
+  (ws as WsAlive)._isAlive = true;
+  ws.on('pong', () => { (ws as WsAlive)._isAlive = true; });
 
   try {
     ptyManager.attach(index, ws);
@@ -563,7 +610,14 @@ server.on('error', (err: Error) => {
 
 process.on('uncaughtException', (err: Error) => {
   logServer('uncaught', err.message, err.stack);
-  // Don't exit — keep server alive for running PTY sessions
+  // Politique : un uncaughtException laisse l'état dans un mode incohérent
+  // (timer non clearé, slot dans un état hybride, etc.). On essaie un
+  // killAll best-effort puis on exit avec un code non-nul. Un supervisor
+  // (npm-watch en dev, pm2/systemd en prod) doit respawn le serveur.
+  // Si killAll throw, on exit quand même — la cleanup OS s'en chargera.
+  try { ptyManager.killAll(); } catch (e) { logServer('uncaught-cleanup-error', String(e)); }
+  // Petit délai pour laisser passer les exits PTY avant de quitter.
+  setTimeout(() => process.exit(1), 500).unref();
 });
 
 process.on('unhandledRejection', (reason: unknown) => {
@@ -572,7 +626,7 @@ process.on('unhandledRejection', (reason: unknown) => {
 
 // ── Memory monitoring ──
 
-setInterval(() => {
+const memMonitorTimer = setInterval(() => {
   const mem = process.memoryUsage();
   const rss = (mem.rss / 1024 / 1024).toFixed(0);
   const heap = (mem.heapUsed / 1024 / 1024).toFixed(0);
@@ -581,6 +635,7 @@ setInterval(() => {
   const alive = status.filter(s => s.alive).length;
   logServer('mem', `rss=${rss}MB heap=${heap}MB ext=${ext}MB ptys=${alive}/${status.length}`);
 }, 60_000);
+memMonitorTimer.unref?.();
 
 // ── Shutdown ──
 

@@ -9,6 +9,10 @@ export interface TerminalEntry {
   lastCols?: number;
   lastRows?: number;
   followMode: boolean;
+  // AbortController dont le signal est passé à tous les addEventListener
+  // attachés pour ce terminal (DOM + xterm). controller.abort() dans
+  // destroyTerminals nettoie tout d'un coup → pas de leaks de listeners.
+  abortController: AbortController;
 }
 
 export let workerCount = 4;

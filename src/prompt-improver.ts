@@ -53,10 +53,13 @@ interface ImproveOutcome {
 export class PromptImprover {
   private sessionId: string | null = null;
   private chain: Promise<unknown> = Promise.resolve();
+  private inflight: number = 0;
+  private readonly maxInflight: number = 10;
   private readonly timeoutMs: number;
 
-  constructor(opts: { timeoutMs?: number } = {}) {
+  constructor(opts: { timeoutMs?: number; maxInflight?: number } = {}) {
     this.timeoutMs = opts.timeoutMs ?? 60_000;
+    if (opts.maxInflight && opts.maxInflight > 0) this.maxInflight = opts.maxInflight;
   }
 
   getSessionId(): string | null { return this.sessionId; }
@@ -65,9 +68,16 @@ export class PromptImprover {
 
   // Sérialise les appels via une chaîne de promesses (évite que deux
   // requêtes concurrentes claude --resume corrompent la session).
+  // Cap : on rejette les nouvelles demandes si maxInflight est atteint
+  // (le client reçoit une erreur claire au lieu d'attendre des minutes
+  // dans la chaîne saturée).
   async improve(text: string): Promise<ImproveOutcome> {
+    if (this.inflight >= this.maxInflight) {
+      throw new Error(`improver busy: ${this.inflight} requests in flight (max ${this.maxInflight})`);
+    }
+    this.inflight++;
     const next = this.chain.then(() => this._improveOnce(text));
-    this.chain = next.catch(() => undefined);
+    this.chain = next.catch(() => undefined).finally(() => { this.inflight--; });
     return next;
   }
 

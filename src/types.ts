@@ -29,6 +29,9 @@ export interface Slot {
   chunksTotalLen: number;
   joinedCache: string;
   dirty: boolean;
+  // Cache du buffer ANSI-strippé pour getOutput() — invalidé en même temps
+  // que joinedCache via le flag dirty. Évite le re-strip à chaque appel.
+  strippedCache: string;
   restartCount: number;
   removed?: boolean;
   // UUID v4 — passé à `claude --session-id <uuid>` au 1er lancement,
@@ -38,6 +41,18 @@ export interface Slot {
   // true si le prochain spawn doit faire --resume (session déjà existante côté
   // claude), false si --session-id (création fresh avec id contrôlé).
   resume?: boolean;
+  // Slot marqué crashed après épuisement du retry budget (3 tentatives).
+  // L'utilisateur doit restart manuellement. Reset au spawn réussi.
+  crashed?: boolean;
+  // True quand on a sauté un envoi WS pour cause de backpressure. Le
+  // prochain envoi doit alors push le buffer complet pour resync xterm.
+  wsDesynced?: boolean;
+  // Timer du \r différé après bracketed-paste dans sendInput. On le clear
+  // avant chaque nouveau set pour ne pas accumuler des Enter en rafale.
+  pendingEnterTimer?: ReturnType<typeof setTimeout> | null;
+  // Timer qui reset restartCount après uptime stable (60s). Permet de ne
+  // pas brûler le retry budget sur des crashes espacés dans le temps.
+  uptimeTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 export interface Suggestion {
@@ -62,6 +77,9 @@ export interface TerminalStatus {
   startedAt: string | null;
   role: 'pilot' | 'worker';
   suggestion: Suggestion | null;
+  // True quand le slot a épuisé son budget de restarts. Le frontend
+  // affiche un état "crashed" et un bouton restart manuel.
+  crashed?: boolean;
 }
 
 export interface LaunchOptions {
