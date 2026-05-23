@@ -70,7 +70,9 @@ python scripts/whisper_sidecar.py
 ```
 
 Hotkey : maintenir **Ctrl+Espace** pendant qu'on parle, relâcher → transcript
-apparaît dans la textarea de la pane focusée après ~1s.
+écrit directement dans l'input claude TUI de la pane focusée après ~1s
+(via WS raw + bracketed-paste). L'user presse Enter pour submit. Pas de
+bloc compose intermédiaire.
 
 ## Key Files
 

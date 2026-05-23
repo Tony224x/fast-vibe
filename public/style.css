@@ -1110,14 +1110,16 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   100% { transform: scale(1.55); opacity: 0;    border-width: 1px; }
 }
 
-/* Textarea cible de la dictée : outline + glow rouge qui respire */
-.pane-compose-popover.voice-listening .compose-textarea {
+/* Pane cible de la dictée : halo rouge qui respire autour du pane.
+   La voice écrit directement dans le PTY (input claude TUI), donc on
+   surligne le pane entier — pas un sous-élément compose qui n'est pas
+   impliqué dans ce flow. */
+.terminal-pane.voice-listening {
   outline: 2px solid rgba(239, 68, 68, 0.85);
   outline-offset: -2px;
-  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.10), 0 0 24px rgba(239, 68, 68, 0.30) inset;
-  animation: voice-textarea-glow 1.4s ease-in-out infinite;
+  animation: voice-pane-glow 1.4s ease-in-out infinite;
 }
-@keyframes voice-textarea-glow {
+@keyframes voice-pane-glow {
   0%, 100% { box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.10), 0 0 12px rgba(239, 68, 68, 0.18) inset; }
   50%      { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0.18), 0 0 28px rgba(239, 68, 68, 0.40) inset; }
 }

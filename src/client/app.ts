@@ -220,9 +220,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Compose popover keyboard shortcuts (Ctrl+I = improve, Ctrl+Enter = send)
-  // Voice-armed : si le textarea vient d'être rempli par dictée, plain
-  // Enter envoie (UX message vocal). Tout autre keystroke désarme →
-  // retour au Ctrl+Enter normal.
   document.getElementById('terminals')!.addEventListener('keydown', (e) => {
     const ke = e as KeyboardEvent;
     const ta = (ke.target as HTMLElement).closest('.compose-textarea') as HTMLTextAreaElement | null;
@@ -234,23 +231,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       improveComposePrompt(idx);
     } else if ((ke.ctrlKey || ke.metaKey) && ke.key === 'Enter') {
       ke.preventDefault();
-      delete ta.dataset.voiceArmed;
-      sendComposePrompt(idx);
-    } else if (ke.key === 'Enter' && !ke.shiftKey && !ke.altKey && ta.dataset.voiceArmed === '1') {
-      ke.preventDefault();
-      delete ta.dataset.voiceArmed;
       sendComposePrompt(idx);
     } else if (ke.key === 'Escape') {
       ke.preventDefault();
-      delete ta.dataset.voiceArmed;
       const popover = ta.closest('.pane-compose-popover') as HTMLElement | null;
       popover?.classList.add('hidden');
-    } else if (ta.dataset.voiceArmed === '1' && ke.key.length === 1) {
-      // L'user tape du texte → édition manuelle → désarmer (les modifier
-      // keys, flèches, Backspace etc. ont key.length > 1 et ne désarment
-      // pas, pour ne pas péter le flow "dictée → Enter" sur un appui
-      // accidentel de Shift par ex.).
-      delete ta.dataset.voiceArmed;
     }
   });
 

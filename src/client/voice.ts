@@ -3,7 +3,7 @@
 // Architecture :
 //   browser MediaRecorder (webm/opus) ──► POST /api/transcribe ──►
 //   server proxies to ──► python scripts/whisper_sidecar.py ──►
-//   transcript JSON ──► insert in compose textarea.
+//   transcript JSON ──► WS raw write directly into the claude PTY.
 //
 // On a abandonné l'ancien Web Speech API (Chrome ⇄ Google Cloud) à cause
 // de drops réseau persistants (proxy, VPN, hiccups Google). MediaRecorder
@@ -12,9 +12,13 @@
 // UX :
 //   - Push-to-talk : maintenir Ctrl+Espace pendant qu'on parle, relâcher.
 //   - Toggle : clic sur le bouton mic dans la popover compose.
-//   - One-shot : le transcript apparaît dans la textarea APRÈS le release
-//     (pas de transcript temps réel comme Web Speech). En pratique on a
-//     ~1s de latence après le release sur un small whisper warmé.
+//   - One-shot : le transcript apparaît DIRECTEMENT dans l'input claude
+//     (TUI prompt) après ~1s de latence. L'user presse Enter naturellement
+//     pour submit — pas de "bloc compose séparé" intermédiaire.
+//   - Bracketed-paste : on wrappe en ESC [200~…ESC [201~ pour que claude
+//     traite la chaîne comme un paste atomique, pas comme une rafale de
+//     keystrokes (sinon autocomplete / slash commands peuvent fire sur
+//     des préfixes).
 
 import { focusedIndex, launched, terminals } from './state';
 import { showToast } from './toast';
@@ -69,12 +73,15 @@ function setBadge(active: boolean, label?: string): void {
   }
 }
 
-function setTextareaListening(idx: number, active: boolean): void {
-  document.querySelectorAll('.pane-compose-popover.voice-listening')
+function setPaneListening(idx: number, active: boolean): void {
+  // Indicateur visuel sur le pane en train d'écouter (halo bordure).
+  // Plus de surlignage de compose textarea — la voice écrit direct dans
+  // le PTY, le bloc compose n'est plus impliqué.
+  document.querySelectorAll('.terminal-pane.voice-listening')
     .forEach((el) => el.classList.remove('voice-listening'));
   if (active && idx >= 0) {
-    const wrapper = document.querySelector(`[data-compose-popover="${idx}"]`) as HTMLElement | null;
-    if (wrapper) wrapper.classList.add('voice-listening');
+    const pane = document.querySelector(`.terminal-pane[data-index="${idx}"]`) as HTMLElement | null;
+    if (pane) pane.classList.add('voice-listening');
   }
 }
 
@@ -85,14 +92,6 @@ function setMicButtonsActive(active: boolean, idx: number): void {
     btn.classList.toggle('recording', active && btnIdx === idx);
     btn.setAttribute('aria-pressed', String(active && btnIdx === idx));
   });
-}
-
-function ensureComposeOpen(idx: number): HTMLTextAreaElement | null {
-  const wrapper = document.querySelector(`[data-compose-popover="${idx}"]`) as HTMLElement | null;
-  if (!wrapper) return null;
-  wrapper.classList.remove('hidden');
-  const ta = wrapper.querySelector('.compose-textarea') as HTMLTextAreaElement | null;
-  return ta;
 }
 
 function paneCanCompose(idx: number): boolean {
@@ -169,16 +168,12 @@ export async function startVoiceCapture(idx?: number): Promise<void> {
     return;
   }
   if (!paneCanCompose(t)) {
-    showToast('Ce pane ne supporte pas la compose (Docker)');
+    showToast('Ce pane ne supporte pas l\'input (Docker)');
     return;
   }
-  const ta = ensureComposeOpen(t);
-  if (!ta) {
-    showToast('Compose introuvable');
-    return;
-  }
+  // Pas de focus textarea — on écrit directement dans la PTY via WS,
+  // pas dans le bloc compose. Le focus reste sur le pane / xterm.
   targetIdx = t;
-  ta.focus();
 
   let stream: MediaStream;
   try {
@@ -222,7 +217,7 @@ export async function startVoiceCapture(idx?: number): Promise<void> {
   recording = true;
   setBadge(true, 'Écoute…');
   setMicButtonsActive(true, targetIdx);
-  setTextareaListening(targetIdx, true);
+  setPaneListening(targetIdx, true);
 }
 
 export function stopVoiceCapture(): void {
@@ -240,7 +235,7 @@ function cleanupAfterRecord(): void {
   pendingTranscription = false;
   setBadge(false);
   setMicButtonsActive(false, targetIdx);
-  setTextareaListening(targetIdx, false);
+  setPaneListening(targetIdx, false);
   audioChunks = [];
   mediaRecorder = null;
 }
@@ -248,7 +243,7 @@ function cleanupAfterRecord(): void {
 async function onRecorderStop(): Promise<void> {
   recording = false;
   setMicButtonsActive(false, targetIdx);
-  setTextareaListening(targetIdx, false);
+  setPaneListening(targetIdx, false);
 
   if (audioChunks.length === 0) {
     setBadge(false);
@@ -306,26 +301,38 @@ async function onRecorderStop(): Promise<void> {
   setBadge(false);
   pendingTranscription = false;
   const text = (result?.text || '').trim();
-  if (text) appendToTextarea(targetIdx, text);
+  if (text) sendToTerminal(targetIdx, text);
 }
 
-function appendToTextarea(idx: number, text: string): void {
-  const wrapper = document.querySelector(`[data-compose-popover="${idx}"]`) as HTMLElement | null;
-  if (!wrapper) return;
-  const ta = wrapper.querySelector('.compose-textarea') as HTMLTextAreaElement | null;
-  if (!ta) return;
-  const sep = (ta.value && !ta.value.endsWith(' ') && !ta.value.endsWith('\n')) ? ' ' : '';
-  ta.value = ta.value + sep + text;
-  const end = ta.value.length;
-  try { ta.setSelectionRange(end, end); } catch { /* noop */ }
-  ta.scrollTop = ta.scrollHeight;
-  // Arme l'Enter pour submit immédiat : après une dictée, l'user s'attend
-  // à appuyer sur Enter pour envoyer, pas Ctrl+Enter (UX message vocal).
-  // Le flag est cleared dans le keydown handler de app.ts dès que l'user
-  // tape autre chose qu'Enter (édition manuelle → retour au Ctrl+Enter).
-  ta.dataset.voiceArmed = '1';
-  // Focus pour que l'user puisse éditer / soumettre directement.
-  try { ta.focus(); } catch { /* noop */ }
+// Envoie le transcript DIRECTEMENT dans le PTY (input claude TUI) via la
+// WS attachée au terminal. Pas de bloc compose intermédiaire : le texte
+// apparaît dans le prompt de claude prêt à être validé par Enter.
+//
+// Bracketed-paste (ESC [200~…[201~) : claude/Kiro reconnaissent ce
+// wrapper et traitent la chaîne comme un paste atomique au lieu d'une
+// rafale de keystrokes (qui pourrait fire de l'autocomplete, déclencher
+// des slash-commands sur un préfixe "/" qui matcherait, etc.). Aussi :
+// les newlines dans le transcript restent des newlines et ne submittent
+// pas prématurément.
+function sendToTerminal(idx: number, text: string): void {
+  const entry = terminals[idx];
+  if (!entry || !entry.ws || entry.ws.readyState !== WebSocket.OPEN) {
+    showToast('Terminal indisponible pour la dictée');
+    return;
+  }
+  const payload = JSON.stringify({
+    type: 'raw',
+    data: `\x1b[200~${text}\x1b[201~`,
+  });
+  try {
+    entry.ws.send(payload);
+    // Focus le terminal pour que l'Enter de l'user aille bien à claude
+    // et pas dans une autre zone (le xterm-helper-textarea capte le
+    // clavier quand le pane a le focus).
+    try { entry.term?.focus(); } catch { /* noop */ }
+  } catch (e: unknown) {
+    showToast(`Envoi terminal : ${(e as Error).message}`);
+  }
 }
 
 function onKeyDown(e: KeyboardEvent): void {
