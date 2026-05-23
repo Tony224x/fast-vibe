@@ -46,6 +46,31 @@ npm run dev    # Dev mode with auto-reload
 | `POST /api/terminal/:id/compact` | Compact context |
 | `POST /api/terminal/:id/clear` | Clear context |
 | `GET /api/status` | Status of all terminals |
+| `POST /api/transcribe` | Multipart audio → text (proxy vers sidecar Python whisper) |
+| `GET /api/transcribe/health` | Probe du sidecar whisper |
+
+## Voice / dictée
+
+Le voice utilise un sidecar Python `faster-whisper` (pas Web Speech API,
+trop dépendant des serveurs Google et instable). Le browser enregistre via
+MediaRecorder et POST le blob → server proxy → sidecar local → transcript.
+
+```bash
+# Setup une fois (premier lancement télécharge ~1.5GB de modèle)
+pip install -r scripts/whisper_requirements.txt
+
+# Lancer le sidecar (à garder ouvert pendant l'usage de fast-vibe)
+python scripts/whisper_sidecar.py
+
+# Env optionnel pour customiser :
+#   FAST_VIBE_WHISPER_PORT (default 8765)
+#   WHISPER_MODEL (tiny/base/small/medium/large-v3, default small)
+#   WHISPER_DEVICE (cpu/cuda/auto, default auto)
+#   WHISPER_LANGUAGE (default fr)
+```
+
+Hotkey : maintenir **Ctrl+Espace** pendant qu'on parle, relâcher → transcript
+apparaît dans la textarea de la pane focusée après ~1s.
 
 ## Key Files
 

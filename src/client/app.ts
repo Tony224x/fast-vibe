@@ -9,9 +9,11 @@ import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
 import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
-import { escapeHtml } from './utils';
+import { escapeHtml, postJson, deleteJson } from './utils';
 import { initHelp } from './help';
+import { initVoice, toggleVoiceCapture } from './voice';
 import { debounce } from './utils';
+import { showToast } from './toast';
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Load settings
@@ -29,20 +31,72 @@ document.addEventListener('DOMContentLoaded', async () => {
     setState('autoFollow', !!s.autoFollow);
     setState('suggestMode', s.suggestMode || 'off');
     setState('theme', s.theme || 'dark');
+    setState('localSTT', !!s.localSTT);
     applyTheme();
   } catch {}
 
   // Auto-reconnect : si une session est déjà active côté serveur (browser
-  // fermé/rouvert, ou serveur redémarré avec restoreAll), reconstruire le
-  // grid au lieu d'afficher le welcome.
+  // fermé/rouvert), reconstruire le grid au lieu d'afficher le welcome.
+  let sessionActive = false;
   try {
     const r = await fetch('/api/status');
     const data = await r.json();
     if (data.session && Array.isArray(data.terminals) && data.terminals.length > 0) {
       const indices = data.terminals.map((t: { id: number }) => t.id);
       await restoreSession(data.session, indices);
+      sessionActive = true;
     }
   } catch {}
+
+  // Opt-in restore : si aucune session n'est active côté serveur mais un
+  // état persisté existe (.session-state.json), proposer à l'utilisateur de
+  // la reprendre via un bandeau. Évite les surprises au boot serveur.
+  if (!sessionActive) {
+    try {
+      const r = await fetch('/api/restore-info');
+      const info = await r.json();
+      if (info.available) {
+        const banner = document.getElementById('restore-banner');
+        const details = document.getElementById('restore-banner-details');
+        const resumeBtn = document.getElementById('btn-restore-resume');
+        const discardBtn = document.getElementById('btn-restore-discard');
+        if (banner && details && resumeBtn && discardBtn) {
+          const ageMin = info.ageMs != null ? Math.round(info.ageMs / 60000) : null;
+          const ageStr = ageMin == null ? '' : ageMin < 1 ? ' · il y a < 1 min' : ` · il y a ${ageMin} min`;
+          details.textContent = `${info.cwd} · ${info.engine}${info.noPilot ? ', no pilot' : ''} · ${info.workers} workers${ageStr}`;
+          banner.classList.remove('hidden');
+          resumeBtn.addEventListener('click', async () => {
+            (resumeBtn as HTMLButtonElement).disabled = true;
+            try {
+              const res = await postJson('/api/restore');
+              const out = await res.json();
+              if (!res.ok) {
+                showToast(out.error || `Restore failed (${res.status})`);
+                (resumeBtn as HTMLButtonElement).disabled = false;
+                return;
+              }
+              // Re-fetch status to obtain the rebuilt session + indices and
+              // reuse the existing reconnect path. restoreSession bâtit le
+              // grid et attach les WS.
+              const s = await (await fetch('/api/status')).json();
+              if (s.session && Array.isArray(s.terminals)) {
+                const indices = s.terminals.map((t: { id: number }) => t.id);
+                banner.classList.add('hidden');
+                await restoreSession(s.session, indices);
+              }
+            } catch (e: unknown) {
+              showToast(`Restore failed: ${(e as Error).message}`);
+              (resumeBtn as HTMLButtonElement).disabled = false;
+            }
+          });
+          discardBtn.addEventListener('click', async () => {
+            try { await deleteJson('/api/restore-info'); } catch {}
+            banner.classList.add('hidden');
+          });
+        }
+      }
+    } catch {}
+  }
 
   document.getElementById('btn-start')!.addEventListener('click', () => launchSession());
   document.getElementById('btn-stop')!.addEventListener('click', (e) => {
@@ -158,9 +212,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     else if (action === 'compose-improve') improveComposePrompt(idx);
     else if (action === 'compose-send') sendComposePrompt(idx);
+    else if (action === 'compose-voice') {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleVoiceCapture(idx);
+    }
   });
 
   // Compose popover keyboard shortcuts (Ctrl+I = improve, Ctrl+Enter = send)
+  // Voice-armed : si le textarea vient d'être rempli par dictée, plain
+  // Enter envoie (UX message vocal). Tout autre keystroke désarme →
+  // retour au Ctrl+Enter normal.
   document.getElementById('terminals')!.addEventListener('keydown', (e) => {
     const ke = e as KeyboardEvent;
     const ta = (ke.target as HTMLElement).closest('.compose-textarea') as HTMLTextAreaElement | null;
@@ -172,11 +234,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       improveComposePrompt(idx);
     } else if ((ke.ctrlKey || ke.metaKey) && ke.key === 'Enter') {
       ke.preventDefault();
+      delete ta.dataset.voiceArmed;
+      sendComposePrompt(idx);
+    } else if (ke.key === 'Enter' && !ke.shiftKey && !ke.altKey && ta.dataset.voiceArmed === '1') {
+      ke.preventDefault();
+      delete ta.dataset.voiceArmed;
       sendComposePrompt(idx);
     } else if (ke.key === 'Escape') {
       ke.preventDefault();
+      delete ta.dataset.voiceArmed;
       const popover = ta.closest('.pane-compose-popover') as HTMLElement | null;
       popover?.classList.add('hidden');
+    } else if (ta.dataset.voiceArmed === '1' && ke.key.length === 1) {
+      // L'user tape du texte → édition manuelle → désarmer (les modifier
+      // keys, flèches, Backspace etc. ont key.length > 1 et ne désarment
+      // pas, pour ne pas péter le flow "dictée → Enter" sur un appui
+      // accidentel de Shift par ex.).
+      delete ta.dataset.voiceArmed;
     }
   });
 
@@ -237,4 +311,5 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarClickDelegation();
   initProfilesUI();
   initHelp();
+  initVoice();
 });

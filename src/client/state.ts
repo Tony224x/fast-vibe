@@ -25,6 +25,7 @@ export let autoFocus = true;
 export let autoFollow = false;
 export let theme = 'dark';
 export let suggestMode = 'off';
+export let localSTT = false;
 export let expandedIndex = -1;
 export let focusedIndex = 0;
 export let launched = false;
@@ -39,6 +40,11 @@ export const terminals: TerminalEntry[] = [];
 export const textDecoder = new TextDecoder();
 export const unreadTerminals = new Set<number>();
 
+// Pane "kind" par index : reserved pour panes spécialisés (docker-logs,
+// docker-rebuild, etc.) qui ne supportent pas la compose textbox. Pour les
+// panes standards (claude/kiro/shell) la valeur reste undefined → compose OK.
+export const terminalKinds: Array<string | undefined> = [];
+
 const setters = {
   workerCount:     (v: number) => { workerCount = v; },
   previewUrl:      (v: string) => { previewUrl = v; },
@@ -50,6 +56,7 @@ const setters = {
   autoFollow:      (v: boolean) => { autoFollow = v; },
   theme:           (v: string) => { theme = v; },
   suggestMode:     (v: string) => { suggestMode = v; },
+  localSTT:        (v: boolean) => { localSTT = v; },
   expandedIndex:   (v: number) => { expandedIndex = v; },
   focusedIndex:    (v: number) => { focusedIndex = v; },
   launched:        (v: boolean) => { launched = v; },

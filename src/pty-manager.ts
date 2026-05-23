@@ -198,6 +198,7 @@ export class PtyManager {
 
     slot.pty = proc;
     slot.startedAt = new Date().toISOString();
+    slot.startedAtMs = Date.now();
     slot.chunks = [];
     slot.chunksTotalLen = 0;
     slot.joinedCache = '';
@@ -403,12 +404,29 @@ export class PtyManager {
 
     if (sid && !slot.resume) slot.resume = true;
 
+    // Auto-exit conditionnel du shell parent : on chain `|| exit`, donc
+    // exit ne s'exécute QUE si claude a échoué (non-zero). Conséquences :
+    //  - claude exit 0 (user tape /exit, Ctrl+D propre) → shell reste
+    //    vivant → user peut taper d'autres commandes shell, ou `c` pour
+    //    relancer claude via l'alias. Pas d'auto-restart intempestif.
+    //  - claude exit non-0 (--resume locké, crash) → shell exit avec le
+    //    code de claude → onExit fire → _scheduleRestart décide :
+    //      • fast-fail (<10s, --resume) : régénère uuid + restart
+    //      • stable crash (>=10s) : pas d'auto-restart, message gris
+    //
+    // Sans ce `||`, le shell reste éternellement vivant après que claude
+    // exit, la PTY ne fait jamais onExit, et la recovery fast-fail ne
+    // peut jamais se déclencher → pane figé sur l'erreur claude.
+    //
+    // cmd.exe et bash partagent la même sémantique pour `||`. Pour le
+    // chainage : ` || ` (avec espaces) marche dans les deux.
+    const exitChain = ' || exit';
     return {
       shell,
       args: shellArgs,
       cwd,
       mode: 'shell',
-      injectCmd: alias + nl + cmd + nl,
+      injectCmd: alias + nl + cmd + exitChain + nl,
     };
   }
 
@@ -435,8 +453,48 @@ export class PtyManager {
 
   // Replanifie un restart après exit non-souhaité. Backoff exponentiel
   // 3s → 6s → 12s, puis arrêt définitif (slot.crashed = true).
+  //
+  // Cas spécial "fast-fail --resume" : si le PTY exit en <10s ET qu'on
+  // essayait de reprendre une session existante, c'est presque toujours que
+  // l'uuid est déjà détenu ailleurs (orphan claude après crash propre,
+  // multi-process, lock fichier). On régénère un NOUVEAU sessionId pour
+  // repartir 100% propre, sans attendre le backoff exponentiel.
   private _scheduleRestart(index: number, slot: Slot, exitCode: number): void {
     if (!this.autoRestart || slot.removed || exitCode === 0) return;
+
+    const uptimeMs = slot.startedAtMs ? Date.now() - slot.startedAtMs : Infinity;
+    const fastFailUptime = uptimeMs < 10_000;
+
+    // Detection sémantique : claude écrit "No conversation found with
+    // session ID: <uuid>" puis exit 1 si --resume cible un UUID inconnu.
+    // Le seuil d'uptime à 10s rate ce cas quand shell+claude startup
+    // (chargement des sessions sur disque, parse) dépasse 10s. En grep'ant
+    // le buffer on capture l'erreur quel que soit le temps total.
+    const buffer = this._getBuffer(slot);
+    const resumeFailedSemantic = !!(
+      slot.resume &&
+      buffer &&
+      /No conversation found with session ID/i.test(buffer)
+    );
+
+    const fastFail = fastFailUptime || resumeFailedSemantic;
+
+    // UX : si le terminal a été stable (>= 10s) ET qu'on n'a pas détecté
+    // une resume-failure sémantique, l'exit est soit un crash visible
+    // soit une sortie intentionnelle de l'user (Ctrl+C, /exit qui sort
+    // en non-0 dans certains cas). Dans tous ces cas, on ne relance PAS
+    // automatiquement — l'user n'a pas envie qu'on lui force un restart
+    // qu'il n'a pas demandé. Message gris non-alarmant + bouton Restart
+    // manuel via l'UI.
+    if (!fastFail) {
+      log('exit-stable', `terminal=${index} stable exit after ${(uptimeMs/1000).toFixed(1)}s code=${exitCode} — no auto-restart`);
+      try {
+        if (slot.ws && slot.ws.readyState === 1) {
+          slot.ws.send(`\r\n\x1b[90m[fast-vibe] Session terminée (code ${exitCode}). Cliquez Restart pour relancer.\x1b[0m\r\n`);
+        }
+      } catch { /* WS gone */ }
+      return;
+    }
 
     if (slot.restartCount >= 3) {
       slot.crashed = true;
@@ -450,16 +508,37 @@ export class PtyManager {
     }
 
     slot.restartCount++;
-    // Fallback Claude : si --resume vient d'échouer (1ère tentative), on
-    // bascule sur --session-id pour ne pas boucler sur une session corrompue.
-    if (slot.resume && slot.sessionId && slot.restartCount === 1) {
-      log('resume-failed', `terminal=${index} session=${slot.sessionId} → fallback to fresh`);
+
+    // Fast-fail sur --resume → l'uuid est soit locké ailleurs, soit
+    // inconnu de claude. Régénération de l'uuid + restart quasi-immédiat
+    // (500ms). On ne brûle pas le retry budget en backoff exponentiel
+    // sur un problème connu.
+    if (this.engine === 'claude' && slot.resume && slot.sessionId && fastFail) {
+      const oldId = slot.sessionId;
+      const cause = resumeFailedSemantic ? 'session inconnue' : `${(uptimeMs/1000).toFixed(1)}s`;
+      slot.sessionId = randomUUID();
       slot.resume = false;
+      try {
+        if (slot.ws && slot.ws.readyState === 1) {
+          slot.ws.send(`\r\n\x1b[33m[fast-vibe] --resume failed (${cause}), starting fresh session…\x1b[0m\r\n`);
+        }
+      } catch { /* WS gone */ }
+      log('resume-fastfail', `terminal=${index} oldSession=${oldId} → newSession=${slot.sessionId} cause=${cause} uptime=${(uptimeMs/1000).toFixed(1)}s`);
+      this.notifyStateChange();
+      if (slot.restartTimer) clearTimeout(slot.restartTimer);
+      slot.restartTimer = setTimeout(() => {
+        slot.restartTimer = null;
+        if (!slot.removed && this.autoRestart) this.spawn(index, this.cwd);
+      }, 500);
+      return;
     }
+
     const delayMs = Math.min(3000 * Math.pow(2, slot.restartCount - 1), 30_000);
-    log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in ${delayMs}ms`);
-    setTimeout(() => {
-      if (!slot.removed) this.spawn(index, this.cwd);
+    log('auto-restart', `terminal=${index} attempt=${slot.restartCount}/3 in ${delayMs}ms uptime=${(uptimeMs/1000).toFixed(1)}s`);
+    if (slot.restartTimer) clearTimeout(slot.restartTimer);
+    slot.restartTimer = setTimeout(() => {
+      slot.restartTimer = null;
+      if (!slot.removed && this.autoRestart) this.spawn(index, this.cwd);
     }, delayMs);
   }
 
@@ -558,8 +637,13 @@ export class PtyManager {
     // 2 PTYs share le même slot pendant ~100ms, et le onExit du précédent
     // (déjà en vol) flippe slot.pty à null après le nouveau spawn.
     const delay = previous && process.platform === 'win32' ? 100 : 0;
-    setTimeout(() => {
-      if (slot.removed) return;
+    if (slot.restartTimer) clearTimeout(slot.restartTimer);
+    slot.restartTimer = setTimeout(() => {
+      slot.restartTimer = null;
+      // autoRestart=false signale qu'un killAll est en cours — on n'a pas
+      // le droit de re-spawn, sinon on resuscite après teardown (test leak
+      // ou shutdown du serveur).
+      if (slot.removed || !this.autoRestart) return;
       this.spawn(index, this.cwd);
       try {
         if (slot.ws && slot.ws.readyState === 1 && slot.chunksTotalLen > 0) {
@@ -662,6 +746,7 @@ export class PtyManager {
       wsDesynced: false,
       pendingEnterTimer: null,
       uptimeTimer: null,
+      restartTimer: null,
     }));
 
     // Update pilot prompt with correct worker count (only for claude with pilot)
@@ -744,6 +829,7 @@ export class PtyManager {
       wsDesynced: false,
       pendingEnterTimer: null,
       uptimeTimer: null,
+      restartTimer: null,
     });
     this.count = this.slots.length;
     this.spawn(newIndex, this.cwd);
@@ -769,12 +855,31 @@ export class PtyManager {
     if (index >= this.slots.length) return;
     const slot = this.slots[index];
     if (slot.pty) {
-      log('kill', `terminal=${index} pid=${slot.pty.pid}`);
+      const pid = slot.pty.pid;
+      log('kill', `terminal=${index} pid=${pid}`);
+      // Windows : pty.kill() envoie WM_CLOSE au shell parent (cmd.exe) mais
+      // ne propage PAS au grand-enfant (claude.exe / kiro-cli.exe lancé via
+      // l'alias `c` injecté). Résultat : N orphelins claude.exe tournent
+      // après chaque kill, et le prochain --resume <uuid> se heurte au
+      // verrou de session déjà détenu → terminal vide / boucle de retry.
+      // `taskkill /T /F /PID` tue l'arbre des descendants. On le fait AVANT
+      // pty.kill() pour ne pas laisser la fenêtre où le shell parent meurt
+      // mais l'enfant survit en zombie.
+      if (process.platform === 'win32' && pid) {
+        try {
+          execSync(`taskkill /T /F /PID ${pid}`, {
+            stdio: 'ignore',
+            timeout: 3000,
+            windowsHide: true,
+          });
+        } catch { /* process already dead, or perms — pty.kill() couvrira */ }
+      }
       try { slot.pty.kill(); } catch (e: unknown) { log('kill-error', `terminal=${index} ${(e as Error).message}`); }
       slot.pty = null;
     }
     if (slot.pendingEnterTimer) { clearTimeout(slot.pendingEnterTimer); slot.pendingEnterTimer = null; }
     if (slot.uptimeTimer) { clearTimeout(slot.uptimeTimer); slot.uptimeTimer = null; }
+    if (slot.restartTimer) { clearTimeout(slot.restartTimer); slot.restartTimer = null; }
     slot.startedAt = null;
     slot.chunks = [];
     slot.chunksTotalLen = 0;
@@ -883,6 +988,16 @@ export class PtyManager {
 
   private killSuggesteur(): void {
     if (this.suggesteur && this.suggesteur.pty) {
+      const pid = this.suggesteur.pty.pid;
+      if (process.platform === 'win32' && pid) {
+        try {
+          execSync(`taskkill /T /F /PID ${pid}`, {
+            stdio: 'ignore',
+            timeout: 3000,
+            windowsHide: true,
+          });
+        } catch { /* already gone */ }
+      }
       try { this.suggesteur.pty.kill(); } catch { /* already dead */ }
     }
     this.suggesteur = null;

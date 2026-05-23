@@ -48,4 +48,5 @@ export const ICONS = {
   sparkles: svg('<path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/>'),
   wand: svg('<path d="M3 21l9-9"/><path d="M14 7l3 3"/><path d="M5 6h2"/><path d="M6 5v2"/><path d="M19 14h2"/><path d="M20 13v2"/><path d="M15 4l1 2 2 1-2 1-1 2-1-2-2-1 2-1z"/>'),
   messageSquare: svg('<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  mic: svg('<path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>'),
 };

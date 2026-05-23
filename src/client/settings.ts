@@ -1,4 +1,4 @@
-import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, autoFollow, suggestMode, theme, setState } from './state';
+import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, autoFollow, suggestMode, theme, localSTT, setState } from './state';
 import { postJson, deleteJson, escapeHtml } from './utils';
 import { applyTheme } from './theme';
 import { showToast } from './toast';
@@ -15,6 +15,7 @@ export function openSettings(): void {
   (document.getElementById('setting-auto-follow') as HTMLInputElement).checked = autoFollow;
   (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = suggestMode;
   (document.getElementById('setting-theme') as HTMLSelectElement).value = theme;
+  (document.getElementById('setting-local-stt') as HTMLInputElement).checked = localSTT;
   document.getElementById('settings-overlay')!.classList.remove('hidden');
   loadProfiles();
 }
@@ -34,6 +35,7 @@ export async function saveSettings(): Promise<void> {
   const newAutoFollow = (document.getElementById('setting-auto-follow') as HTMLInputElement).checked;
   const newSuggestMode = (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value;
   const newTheme = (document.getElementById('setting-theme') as HTMLSelectElement).value;
+  const newLocalSTT = (document.getElementById('setting-local-stt') as HTMLInputElement).checked;
 
   setState('workerCount', newWorkerCount);
   setState('previewUrl', newPreviewUrl);
@@ -45,13 +47,14 @@ export async function saveSettings(): Promise<void> {
   setState('autoFollow', newAutoFollow);
   setState('suggestMode', newSuggestMode);
   setState('theme', newTheme);
+  setState('localSTT', newLocalSTT);
 
   applyTheme();
   await postJson('/api/settings', {
     workers: newWorkerCount, previewUrl: newPreviewUrl, engine: newEngine,
     noPilot: newNoPilot, trustMode: newTrustMode, useWSL: newUseWSL,
     autoFocus: newAutoFocus, autoFollow: newAutoFollow,
-    suggestMode: newSuggestMode, theme: newTheme,
+    suggestMode: newSuggestMode, theme: newTheme, localSTT: newLocalSTT,
   });
 
   closeSettings();
@@ -94,6 +97,7 @@ export async function saveProfile(): Promise<void> {
     autoFollow: (document.getElementById('setting-auto-follow') as HTMLInputElement).checked,
     suggestMode: (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value,
     theme: (document.getElementById('setting-theme') as HTMLSelectElement).value,
+    localSTT: (document.getElementById('setting-local-stt') as HTMLInputElement).checked,
   };
   await postJson('/api/profiles', { name, settings: s });
   input.value = '';
@@ -115,6 +119,7 @@ export async function loadProfile(name: string): Promise<void> {
   if (s.autoFollow != null) { setState('autoFollow', s.autoFollow as boolean); (document.getElementById('setting-auto-follow') as HTMLInputElement).checked = s.autoFollow as boolean; }
   if (s.suggestMode != null) { setState('suggestMode', s.suggestMode as string); (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = s.suggestMode as string; }
   if (s.theme != null) { setState('theme', s.theme as string); (document.getElementById('setting-theme') as HTMLSelectElement).value = s.theme as string; applyTheme(); }
+  if (s.localSTT != null) { setState('localSTT', s.localSTT as boolean); (document.getElementById('setting-local-stt') as HTMLInputElement).checked = s.localSTT as boolean; }
   // Persist to server so settings survive reload
   await postJson('/api/settings', s);
   showToast(`Profile "${name}" loaded`);

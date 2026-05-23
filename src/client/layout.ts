@@ -357,6 +357,7 @@ function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]
               <div class="pane-compose-popover hidden" data-compose-popover="${index}">
                 <textarea class="compose-textarea" data-index="${index}" placeholder="Ton prompt — Ctrl+I pour améliorer, Ctrl+Enter pour envoyer…" rows="5"></textarea>
                 <div class="compose-actions">
+                  <button class="compose-btn compose-btn-voice" data-action="compose-voice" data-index="${index}" title="Dicter (Ctrl+Espace)" aria-pressed="false">${ICONS.mic}<span>Dicter</span></button>
                   <button class="compose-btn compose-btn-improve" data-action="compose-improve" data-index="${index}" title="Améliorer (Ctrl+I)">${ICONS.sparkles}<span>Améliorer</span></button>
                   <button class="compose-btn compose-btn-send" data-action="compose-send" data-index="${index}" title="Envoyer (Ctrl+Enter)">${ICONS.send}<span>Envoyer</span></button>
                 </div>

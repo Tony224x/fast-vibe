@@ -3,7 +3,7 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
-import { exec } from 'child_process';
+import { exec, spawn, execSync, ChildProcess } from 'child_process';
 import { PtyManager } from './pty-manager';
 import { Settings, Bookmark, Profile, DEFAULTS } from './types';
 import { improver } from './prompt-improver';
@@ -156,6 +156,17 @@ app.post('/api/settings', (req: Request, res: Response) => {
   if (req.body.logsEnabled != null) {
     settings.logsEnabled = !!req.body.logsEnabled;
   }
+  // localSTT : flip détection. Si on l'active, spawn le sidecar Python.
+  // Si on le désactive, kill. On compare avant d'écraser pour ne pas
+  // re-spawn inutile sur un POST qui passe la même valeur.
+  if (req.body.localSTT != null) {
+    const next = !!req.body.localSTT;
+    if (next !== settings.localSTT) {
+      settings.localSTT = next;
+      if (next) void startWhisperSidecar();
+      else stopWhisperSidecar();
+    }
+  }
   saveSettings();
   res.json(settings);
 });
@@ -295,6 +306,60 @@ app.post('/api/stop', async (_req: Request, res: Response) => {
   await ptyManager.killAll();
   // /api/stop = "session terminée" : on supprime le state pour que le prochain
   // boot affiche le welcome au lieu de restorer.
+  clearSessionState();
+  res.json({ ok: true });
+});
+
+// ── Restore API (opt-in) ──
+//
+// Le boot ne relance plus automatiquement les sessions depuis
+// .session-state.json. Le client appelle /api/restore-info pour savoir si
+// un état est disponible, puis POST /api/restore pour le ressusciter.
+
+app.get('/api/restore-info', (_req: Request, res: Response) => {
+  // Si une session est déjà active (slots non vides), pas de "restore" à
+  // proposer : c'est le auto-reconnect classique qui prend le relais.
+  if (ptyManager.slots.length > 0) {
+    return res.json({ available: false, reason: 'session-active' });
+  }
+  const state = loadSessionState();
+  if (!state) return res.json({ available: false });
+  if (!state.cwd || !fs.existsSync(state.cwd)) {
+    return res.json({ available: false, reason: 'cwd-missing', cwd: state.cwd });
+  }
+  let ageMs: number | null = null;
+  try { ageMs = Date.now() - fs.statSync(SESSION_STATE_FILE).mtimeMs; }
+  catch { ageMs = null; }
+  const aliveWorkers = state.workers.filter(w => !w.removed).length;
+  res.json({
+    available: true,
+    cwd: state.cwd,
+    engine: state.engine,
+    noPilot: state.noPilot,
+    workers: aliveWorkers,
+    totalWorkers: state.workers.length,
+    ageMs,
+  });
+});
+
+app.post('/api/restore', (_req: Request, res: Response) => {
+  if (ptyManager.slots.length > 0) {
+    return res.status(409).json({ error: 'Session already active. Stop it first.' });
+  }
+  const state = loadSessionState();
+  if (!state) return res.status(404).json({ error: 'No session state available' });
+  if (!state.cwd || !fs.existsSync(state.cwd)) {
+    return res.status(400).json({ error: `Saved cwd missing: ${state.cwd}` });
+  }
+  try {
+    ptyManager.restoreAll(state);
+    res.json({ ok: true, cwd: state.cwd, workers: ptyManager.slots.length });
+  } catch (e: unknown) {
+    res.status(500).json({ error: `restore failed: ${(e as Error).message}` });
+  }
+});
+
+app.delete('/api/restore-info', (_req: Request, res: Response) => {
   clearSessionState();
   res.json({ ok: true });
 });
@@ -451,6 +516,159 @@ app.post('/api/improve-prompt', async (req: Request, res: Response) => {
   } catch (err: unknown) {
     res.status(500).json({ error: `improve failed: ${(err as Error).message}` });
   }
+});
+
+// ── Voice transcription proxy ──
+//
+// Proxy le multipart audio reçu du browser vers le sidecar Python
+// faster-whisper (scripts/whisper_sidecar.py) sur 127.0.0.1:WHISPER_PORT.
+// On streame avec http.request pour ne pas buffer le blob audio en mémoire
+// (peut faire plusieurs MB pour les utterances longues). Le port est lu
+// dans l'env FAST_VIBE_WHISPER_PORT, default 8765.
+
+const WHISPER_PORT = parseInt(process.env.FAST_VIBE_WHISPER_PORT || '8765', 10);
+const WHISPER_SCRIPT = path.join(__dirname, '..', 'scripts', 'whisper_sidecar.py');
+
+// Sidecar Python géré par nous. Null si :
+//  - localSTT = false (l'user n'a pas activé)
+//  - localSTT = true mais un autre process tient déjà le port (lancé à la
+//    main par l'user dans un autre terminal) → on ne touche pas
+//  - spawn a échoué (python absent, etc.)
+let whisperSidecar: ChildProcess | null = null;
+// Évite les double-spawn quand /api/settings est toggle rapidement.
+let whisperSpawnInFlight = false;
+
+function probeWhisperHealth(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const req = http.request({
+      hostname: '127.0.0.1', port: WHISPER_PORT, path: '/health', method: 'GET', timeout: 1500,
+    }, (res) => {
+      // Drain le body pour libérer la socket sinon Node keep-alive la garde.
+      res.resume();
+      resolve(res.statusCode === 200);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
+async function startWhisperSidecar(): Promise<void> {
+  if (whisperSidecar || whisperSpawnInFlight) return;
+  whisperSpawnInFlight = true;
+  try {
+    // Check : si un sidecar tourne déjà (lancé à la main par l'user), on
+    // ne le double-spawn pas. Le proxy /api/transcribe l'utilisera quand
+    // même puisqu'il vise toujours le port.
+    const already = await probeWhisperHealth();
+    if (already) {
+      logServer('whisper', `sidecar déjà actif sur :${WHISPER_PORT} (process externe), pas de spawn`);
+      return;
+    }
+    if (!fs.existsSync(WHISPER_SCRIPT)) {
+      logServer('whisper', `script introuvable : ${WHISPER_SCRIPT} — désactivation`);
+      return;
+    }
+    // Sur Windows le binaire est `python` ; ailleurs souvent `python3`.
+    const py = process.platform === 'win32' ? 'python' : 'python3';
+    logServer('whisper', `spawning ${py} ${WHISPER_SCRIPT}`);
+    const child = spawn(py, [WHISPER_SCRIPT], {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, FAST_VIBE_WHISPER_PORT: String(WHISPER_PORT) },
+      // detached:false → le child est lié au parent. Sur SIGINT, kill se
+      // propage. windowsHide:true évite une console flash sur Windows.
+      windowsHide: true,
+    });
+    whisperSidecar = child;
+    // On préfixe les lignes pour distinguer dans les logs Node mélangés.
+    child.stdout?.on('data', (d: Buffer) => process.stdout.write(`[whisper] ${d.toString()}`));
+    child.stderr?.on('data', (d: Buffer) => process.stderr.write(`[whisper-err] ${d.toString()}`));
+    child.on('exit', (code, signal) => {
+      logServer('whisper', `sidecar exited code=${code} signal=${signal}`);
+      if (whisperSidecar === child) whisperSidecar = null;
+    });
+    child.on('error', (e) => {
+      logServer('whisper', `spawn error : ${e.message}. python est-il dans le PATH ?`);
+      if (whisperSidecar === child) whisperSidecar = null;
+    });
+  } finally {
+    whisperSpawnInFlight = false;
+  }
+}
+
+function stopWhisperSidecar(): void {
+  if (!whisperSidecar) return;
+  const child = whisperSidecar;
+  whisperSidecar = null;
+  const pid = child.pid;
+  logServer('whisper', `killing sidecar pid=${pid}`);
+  // Windows : kill() envoie SIGTERM mais ne propage pas aux sous-process.
+  // Le Flask de Python peut spawn des workers (rare en threaded mais on est
+  // prudents). taskkill /T /F tue l'arbre complet.
+  if (process.platform === 'win32' && pid) {
+    try {
+      execSync(`taskkill /T /F /PID ${pid}`, { stdio: 'ignore', timeout: 3000, windowsHide: true });
+    } catch { /* déjà mort */ }
+  }
+  try { child.kill(); } catch { /* déjà mort */ }
+}
+
+app.post('/api/transcribe', (req: Request, res: Response) => {
+  const proxyReq = http.request({
+    hostname: '127.0.0.1',
+    port: WHISPER_PORT,
+    path: '/transcribe',
+    method: 'POST',
+    headers: {
+      // On forward content-type + content-length pour conserver le boundary
+      // multipart. On retire host pour ne pas confuser Flask.
+      'content-type': req.headers['content-type'] || '',
+      ...(req.headers['content-length'] ? { 'content-length': req.headers['content-length'] } : {}),
+    },
+    timeout: 60_000, // 1 min max pour une transcription (utterance ~30s)
+  }, (proxyRes) => {
+    res.writeHead(proxyRes.statusCode || 502, proxyRes.headers);
+    proxyRes.pipe(res);
+  });
+  proxyReq.on('error', (e: NodeJS.ErrnoException) => {
+    if (res.headersSent) return;
+    if (e.code === 'ECONNREFUSED') {
+      res.status(503).json({
+        error: 'Sidecar whisper non démarré. Lance : python scripts/whisper_sidecar.py',
+        port: WHISPER_PORT,
+      });
+    } else {
+      res.status(502).json({ error: `Proxy whisper: ${e.message}` });
+    }
+  });
+  proxyReq.on('timeout', () => {
+    proxyReq.destroy();
+    if (!res.headersSent) res.status(504).json({ error: 'Whisper timeout (60s)' });
+  });
+  req.pipe(proxyReq);
+});
+
+app.get('/api/transcribe/health', (_req: Request, res: Response) => {
+  const probe = http.request({
+    hostname: '127.0.0.1',
+    port: WHISPER_PORT,
+    path: '/health',
+    method: 'GET',
+    timeout: 2000,
+  }, (probeRes) => {
+    let body = '';
+    probeRes.on('data', (chunk: Buffer) => { body += chunk.toString(); });
+    probeRes.on('end', () => {
+      try {
+        res.json({ available: true, port: WHISPER_PORT, sidecar: JSON.parse(body) });
+      } catch {
+        res.json({ available: true, port: WHISPER_PORT, sidecar: null });
+      }
+    });
+  });
+  probe.on('error', () => { res.json({ available: false, port: WHISPER_PORT }); });
+  probe.on('timeout', () => { probe.destroy(); res.json({ available: false, port: WHISPER_PORT, reason: 'timeout' }); });
+  probe.end();
 });
 
 // ── Layout API ──
@@ -640,6 +858,7 @@ memMonitorTimer.unref?.();
 // ── Shutdown ──
 
 function cleanup(): void {
+  stopWhisperSidecar();
   ptyManager.killAll();
   server.close();
 }
@@ -653,20 +872,24 @@ const PORT = parseInt(process.env.PORT || '3333', 10);
 if (require.main === module) {
   server.listen(PORT, '127.0.0.1', () => {
     logServer('start', `fast-vibe v1.0.0 running at http://localhost:${PORT} (pid=${process.pid})`);
-    // Auto-restore : si .session-state.json existe, relance les workers en
-    // mode --resume. L'utilisateur retrouve son grid et ses conversations
-    // claude au prochain démarrage du serveur.
+    // Opt-in restore : on n'auto-relance plus les workers au boot. Le client
+    // appelle GET /api/restore-info pour découvrir l'état persisté, puis
+    // POST /api/restore quand l'utilisateur clique sur "Reprendre". Ça évite
+    // de spawn N claude --resume sans contexte (browser fermé, port pris par
+    // un ancien process, etc.).
     const restored = loadSessionState();
     if (restored && restored.cwd && fs.existsSync(restored.cwd)) {
-      logServer('auto-restore', `cwd=${restored.cwd} workers=${restored.workers.length}`);
-      try {
-        ptyManager.restoreAll(restored);
-      } catch (e: unknown) {
-        logServer('restore-error', (e as Error).message);
-      }
+      const alive = restored.workers.filter(w => !w.removed).length;
+      logServer('restore-available', `cwd=${restored.cwd} workers=${alive} — call POST /api/restore to resume`);
     } else if (restored) {
       logServer('restore-skipped', `cwd missing: ${restored.cwd}`);
       clearSessionState();
+    }
+    // Auto-start du sidecar whisper si l'user a activé localSTT. Le spawn
+    // est async (vérifie d'abord si le port est libre) et n'empêche pas
+    // le serveur Node de servir les requêtes en attendant.
+    if (settings.localSTT) {
+      void startWhisperSidecar();
     }
   });
 }

@@ -68,6 +68,9 @@
                 <div class="pane-compose-popover hidden" data-compose-popover="0">
                   <textarea class="compose-textarea" data-index="0" placeholder="Ton prompt — Ctrl+I pour améliorer, Ctrl+Enter pour envoyer…" rows="5"></textarea>
                   <div class="compose-actions">
+                    <button class="compose-btn compose-btn-voice" data-action="compose-voice" data-index="0" title="Dicter (Ctrl+Espace)" aria-pressed="false">
+                      <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg><span>Dicter</span>
+                    </button>
                     <button class="compose-btn compose-btn-improve" data-action="compose-improve" data-index="0" title="Améliorer (Ctrl+I)">
                       <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" width="14" height="14"><path d="M12 3l1.7 4.6L18 9l-4.3 1.4L12 15l-1.7-4.6L6 9l4.3-1.4L12 3z"/><path d="M19 14l.8 2.2L22 17l-2.2.8L19 20l-.8-2.2L16 17l2.2-.8L19 14z"/><path d="M5 16l.6 1.6L7 18l-1.4.4L5 20l-.6-1.6L3 18l1.4-.4L5 16z"/></svg><span>Améliorer</span>
                     </button>
@@ -118,6 +121,16 @@
         <div class="welcome-content">
           <h1>fast-vibe</h1>
           <p>1 Pilot · N Workers — Claude Code &amp; Kiro CLI orchestrated in parallel</p>
+          <div id="restore-banner" class="restore-banner hidden">
+            <div class="restore-banner-text">
+              <strong>Session précédente disponible</strong>
+              <span id="restore-banner-details"></span>
+            </div>
+            <div class="restore-banner-actions">
+              <button id="btn-restore-resume" class="btn-primary">Reprendre</button>
+              <button id="btn-restore-discard" class="btn-secondary">Ignorer</button>
+            </div>
+          </div>
           <p class="welcome-hint">Pick a project directory above, or jump back to a recent one</p>
           <div id="welcome-projects"></div>
           <p class="welcome-hint-keys">
@@ -228,6 +241,11 @@
         <label for="setting-auto-follow">Auto-follow</label>
         <input type="checkbox" id="setting-auto-follow">
         <span class="setting-hint">Auto-scroll terminals to bottom on new output</span>
+      </div>
+      <div class="setting-row">
+        <label for="setting-local-stt">Voice locale</label>
+        <input type="checkbox" id="setting-local-stt">
+        <span class="setting-hint">Dictée via faster-whisper (sidecar Python lancé auto)</span>
       </div>
       <div class="setting-row">
         <label for="setting-suggest-mode">Auto-suggest</label>

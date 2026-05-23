@@ -13,6 +13,10 @@ export interface Settings {
   theme: 'dark' | 'light' | 'system';
   suggestMode: 'off' | 'static' | 'ai';
   logsEnabled: boolean;
+  // Si true, le serveur Node spawn automatiquement le sidecar Python
+  // scripts/whisper_sidecar.py au boot et le kill au shutdown. Si false,
+  // l'user doit le lancer lui-même (ou il n'y a pas de transcription).
+  localSTT: boolean;
   lastCwd?: string;
 }
 
@@ -25,6 +29,9 @@ export interface Slot {
   pty: IPty | null;
   ws: WebSocket | null;
   startedAt: string | null;
+  // Timestamp ms du dernier spawn — utilisé par _scheduleRestart pour
+  // détecter un exit "fast-fail" (<10s = --resume cassé probable).
+  startedAtMs?: number | null;
   chunks: string[];
   chunksTotalLen: number;
   joinedCache: string;
@@ -53,6 +60,10 @@ export interface Slot {
   // Timer qui reset restartCount après uptime stable (60s). Permet de ne
   // pas brûler le retry budget sur des crashes espacés dans le temps.
   uptimeTimer?: ReturnType<typeof setTimeout> | null;
+  // Timer du restart différé (fast-fail recovery ou backoff exponentiel).
+  // Stocké pour pouvoir être cleared dans kill()/killAll() — sinon un slot
+  // tué pendant son délai de restart resuscite tout seul 500ms-12s après.
+  restartTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 export interface Suggestion {
@@ -108,4 +119,5 @@ export const DEFAULTS: Settings = {
   theme: 'dark',
   suggestMode: 'off',
   logsEnabled: false,
+  localSTT: false,
 };
