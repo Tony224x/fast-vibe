@@ -1,20 +1,24 @@
 # fast-vibe
 
-Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding instances in parallel, with a control API, drag-to-split layout, spaces/groups, live preview, and context management. Supports **Claude Code** and **Kiro CLI** engines.
+Web-based terminal multiplexer that runs **N AI coding instances** in parallel (Claude Code or Kiro CLI), with a control API, drag-to-split layout, spaces/groups, live preview, context management, voice dictation, and session persistence across restarts. Default config : **4 Claude workers, no pilot**. Optional **pilot mode** turns terminal 0 into an orchestrator that dispatches work to the others via REST.
 
 ```
 ┌──────────┬─────────────────────────────────────┬──────────┐
 │  Spaces  │  [📁 /path/to/project]  [⚙] [Start] │          │
-│ ──────── ├─────────────────────────────────────┤  Status  │
-│ Default  │       PILOT (Claude / Kiro)         │   Panel  │
-│ Group A  ├──────────────┬──────────────────────┤  compact │
-│ Group B  │   Worker 1   │   Worker 2 / Tab     │  clear   │
-│   +      ├──────────────┼──────────────────────┤  verify  │
-│          │   Worker 3   │   Worker 4   │ ⋯ │   │  copy    │
+│ ──────── ├──────────────┬──────────────────────┤  Status  │
+│ Default  │   Worker 0   │   Worker 1 / Tab     │   Panel  │
+│ Group A  │  (or Pilot)  │                      │  compact │
+│ Group B  ├──────────────┼──────────────────────┤  clear   │
+│   +      │   Worker 2   │   Worker 3   │ ⋯ │   │  verify  │
+│          │              │                      │  copy    │
 └──────────┴──────────────┴──────────────┴──────┴──────────┘
                 ▲ drag pane header onto another pane
                   to split (top/right/bottom/left)
                   or drop center to stack as tabs
+
+                 Default : 4 workers, no pilot.
+              Opt-in pilot mode turns Worker 0 into
+            an orchestrator that drives the others via REST.
 ```
 
 ## Features
@@ -34,8 +38,15 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding insta
 - **Multi-engine** — Claude Code or Kiro CLI.
 - **Safe by default** — runs without permission bypass; enable Trust Mode in settings to skip prompts.
 - **WSL support** — launch CLI inside WSL from a Windows host.
-- **Pilot + Workers** — 1 orchestrator dispatches tasks to N workers via REST API (Agent tool disabled, forced curl).
-- **No-Pilot mode** — N independent workers, no orchestrator.
+- **No-Pilot mode (default)** — N independent workers, no orchestrator. Best for parallel exploration.
+- **Pilot + Workers (opt-in)** — turn off "No pilot" in settings to make terminal 0 an orchestrator that dispatches tasks to the others via REST (Agent tool disabled in pilot, forced curl).
+- **Session persistence (3.1)** — each Claude worker spawns with `--session-id <uuid>` and reattaches via `--resume <uuid>` after server restart. State is serialized to `.session-state.json`. If the resume UUID is unknown (e.g. `~/.claude` wiped), it is detected semantically (`No conversation found`) and the worker auto-restarts on a fresh UUID instead of leaving the user stranded.
+
+### Voice dictation (3.1)
+
+- **100% local** via a Python `faster-whisper` sidecar — audio never leaves the machine. No more Web Speech API / Google Cloud drops.
+- **Hold Ctrl+Space, talk, release** — ~1s later the transcript appears directly in the focused pane's Claude TUI input (via WS raw + bracketed-paste). Press Enter to submit, just like a typed prompt.
+- **Auto-spawned sidecar** — flip the `Voice locale` setting and the server launches `scripts/whisper_sidecar.py` at boot (with health probe to avoid double-spawn). Killed cleanly on shutdown.
 
 ### UX
 
@@ -58,21 +69,25 @@ Web-based terminal multiplexer that runs **1 pilot + N workers** AI coding insta
 | Shortcut | Action |
 |----------|--------|
 | `?` | Open help |
+| `Ctrl+Space` (hold) | Voice dictation into focused pane (release to transcribe) |
 | `Ctrl+Shift+F` | Toggle Zen mode |
 | `Ctrl+Shift+B` | Broadcast to focused group |
 | `Ctrl+Shift+G` | Group selected panes |
 | `Ctrl+Shift+S` | Toggle sidebar |
 | `Ctrl+1` … `Ctrl+8` | Switch focused terminal |
 | `Ctrl+]` / `Ctrl+[` | Cycle focused terminal |
+| `Ctrl+Enter` (in compose) | Send composed prompt to its pane |
+| `Ctrl+I` (in compose) | Improve composed prompt via LLM |
 | `Esc` | Close modal / clear group selection / exit expanded |
 
 ## How it works
 
 1. Open `http://localhost:3333`, click the directory input to browse folders.
-2. Configure engine, worker count, no-pilot, trust mode, theme, etc. in **Settings** (⚙).
-3. Click **Start** — spawns terminals with the selected engine.
+2. **Default config**: 4 Claude workers, no pilot. Tweak engine, worker count, no-pilot, trust mode, voice, theme, etc. in **Settings** (⚙).
+3. Click **Start** — spawns terminals with the selected engine. If a previous session is found in `.session-state.json`, a restore banner offers to resume it.
 4. Rearrange panes by dragging headers; spawn / delete workers at runtime.
-5. In pilot mode, the **pilot** controls workers via `curl` (Agent tool is disabled):
+5. Hold **Ctrl+Space** to dictate into the focused pane (requires the whisper sidecar — see Install).
+6. In pilot mode (opt-in), terminal 0 becomes the **pilot** and controls workers via `curl` (Agent tool is disabled):
 
 ```bash
 # Send a task to worker 2
@@ -106,6 +121,27 @@ npm install
 >
 > On Windows, `node-pty` needs Visual Studio Build Tools.
 
+### Voice dictation (optional)
+
+The voice feature relies on a local `faster-whisper` Python sidecar (no cloud, no Google).
+
+```bash
+# Once : install Python deps (downloads ~1.5GB model on first run)
+pip install -r scripts/whisper_requirements.txt
+```
+
+Then enable **Voice locale** in Settings → the server will spawn the sidecar automatically at boot. Hold **Ctrl+Space** to dictate.
+
+Optional env vars (set before `npm start`):
+
+```
+FAST_VIBE_WHISPER_PORT=8765            # sidecar port
+WHISPER_MODEL=small                    # tiny / base / small / medium / large-v3
+WHISPER_DEVICE=auto                    # cpu / cuda / auto
+WHISPER_LANGUAGE=fr                    # ISO 639-1 code
+WHISPER_COMPUTE_TYPE=int8              # int8 / float16 / float32
+```
+
 ## Usage
 
 ```bash
@@ -122,10 +158,12 @@ npm run typecheck
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/settings` | Read settings |
-| `POST` | `/api/settings` | Update settings (`workers`, `previewUrl`, `engine`, `noPilot`, `trustMode`, `useWSL`, `autoFocus`, `autoFollow`, `theme`, `suggestMode`, `logsEnabled`) |
+| `POST` | `/api/settings` | Update settings (`workers`, `previewUrl`, `engine`, `noPilot`, `trustMode`, `useWSL`, `autoFocus`, `autoFollow`, `theme`, `suggestMode`, `logsEnabled`, `localSTT`) |
 | `POST` | `/api/launch` | Start terminals `{"cwd":"/path","workers":4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `GET` | `/api/status` | Status of all terminals |
+| `POST` | `/api/transcribe` | Multipart audio → text (proxied to local whisper sidecar) |
+| `GET` | `/api/transcribe/health` | Probe the whisper sidecar |
 
 ### Terminal control
 
@@ -180,6 +218,7 @@ npm run typecheck
 
 - **Backend** — Node.js, Express, ws, node-pty (TypeScript, compiled with `tsc`)
 - **Frontend** — Vanilla TS bundled with esbuild, xterm.js (CDN), Outfit + General Sans fonts
+- **Voice sidecar** — optional, Python `faster-whisper` + Flask (local, no cloud)
 - **Tests** — Jest + supertest
 - **3 runtime npm dependencies**, no UI framework
 
