@@ -18,7 +18,7 @@ export interface TerminalEntry {
 export let workerCount = 4;
 export let previewUrl = '';
 export let engine = 'claude';
-export let noPilot = false;
+export let noPilot = true;
 export let trustMode = false;
 export let useWSL = false;
 export let autoFocus = true;
