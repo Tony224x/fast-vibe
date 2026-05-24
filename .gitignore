@@ -17,3 +17,5 @@ dist/
 public/bundle.js
 public/bundle.js.map
 *.png
+!docs/img/*.png
+__pycache__/

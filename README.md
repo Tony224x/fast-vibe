@@ -2,6 +2,8 @@
 
 Web-based terminal multiplexer that runs **N AI coding instances** in parallel (Claude Code or Kiro CLI), with a control API, drag-to-split layout, spaces/groups, live preview, context management, voice dictation, and session persistence across restarts. Default config : **4 Claude workers, no pilot**. Optional **pilot mode** turns terminal 0 into an orchestrator that dispatches work to the others via REST.
 
+![Four Claude workers running in parallel, with the Spaces sidebar](docs/img/02-sidebar-and-launch.png)
+
 ```
 ┌──────────┬─────────────────────────────────────┬──────────┐
 │  Spaces  │  [📁 /path/to/project]  [⚙] [Start] │          │
@@ -33,6 +35,10 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
 - **Overflow menu** — secondary actions collapse into a `⋯` popover when a pane is narrower than ~380px (container queries).
 - **Persisted layout** — saved automatically via `/api/layout`.
 
+Each pane header exposes the full action bar — composer, next-steps, prompts, verify, copy, compact, clear, restart, more, delete, expand :
+
+<img src="docs/img/05-pane-header.png" alt="Pane header actions" width="660">
+
 ### Engines & runtime
 
 - **Multi-engine** — Claude Code or Kiro CLI.
@@ -41,6 +47,8 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
 - **No-Pilot mode (default)** — N independent workers, no orchestrator. Best for parallel exploration.
 - **Pilot + Workers (opt-in)** — turn off "No pilot" in settings to make terminal 0 an orchestrator that dispatches tasks to the others via REST (Agent tool disabled in pilot, forced curl).
 - **Session persistence (3.1)** — each Claude worker spawns with `--session-id <uuid>` and reattaches via `--resume <uuid>` after server restart. State is serialized to `.session-state.json`. If the resume UUID is unknown (e.g. `~/.claude` wiped), it is detected semantically (`No conversation found`) and the worker auto-restarts on a fresh UUID instead of leaving the user stranded.
+
+<img src="docs/img/04-settings-modal.png" alt="Settings modal — engine, no-pilot, trust mode, WSL, voice locale, theme" width="520">
 
 ### Voice dictation (3.1)
 
@@ -64,6 +72,10 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
 - **Suggest mode** — off / static / AI suggestions next to a worker.
 - **Persistent settings** — last project path, layout, profiles all saved across restarts.
 
+Press `?` anywhere for the quick guide :
+
+<img src="docs/img/03-help-modal.png" alt="In-app quick guide opened with ?" width="520">
+
 ## Keyboard shortcuts
 
 | Shortcut | Action |
@@ -81,6 +93,8 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
 | `Esc` | Close modal / clear group selection / exit expanded |
 
 ## How it works
+
+![Launch bar with project directory and Start button](docs/img/06-launchbar.png)
 
 1. Open `http://localhost:3333`, click the directory input to browse folders.
 2. **Default config**: 4 Claude workers, no pilot. Tweak engine, worker count, no-pilot, trust mode, voice, theme, etc. in **Settings** (⚙).
