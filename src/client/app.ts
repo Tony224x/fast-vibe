@@ -11,6 +11,7 @@ import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
 import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
 import { escapeHtml, postJson, deleteJson } from './utils';
 import { initHelp } from './help';
+import { initPalette } from './palette';
 import { initVoice, toggleVoiceCapture } from './voice';
 import { debounce } from './utils';
 import { showToast } from './toast';
@@ -296,5 +297,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   initSidebarClickDelegation();
   initProfilesUI();
   initHelp();
+  initPalette();
   initVoice();
 });

@@ -187,8 +187,10 @@ export function detectTaskDone(index: number, data: string): void {
         if (Date.now() - lastUserInputAt > 3000) setFocused(index);
         const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`) as HTMLElement | null;
         if (pane) {
-          pane.style.borderColor = 'var(--green)';
-          setTimeout(() => { pane.style.borderColor = ''; }, 1500);
+          // Les panes n'ont plus de border (grille canvas-unifié) → on flashe
+          // un ring inset vert. Reset à '' laisse le box-shadow .focused se réaffirmer.
+          pane.style.boxShadow = 'inset 0 0 0 1.5px var(--success)';
+          setTimeout(() => { pane.style.boxShadow = ''; }, 1500);
         }
         if (suggestMode !== 'off' && Date.now() - launchTimestamp > 30000) {
           postJson(`/api/suggest/${index}`);
@@ -258,8 +260,23 @@ export function connectWebSocket(index: number, term: InstanceType<typeof Termin
 
 export function createTerminal(index: number): void {
   const term = new Terminal({
-    cursorBlink: true, fontSize: 13,
-    fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
+    cursorBlink: true,
+    cursorStyle: 'bar',
+    cursorWidth: 2,
+    cursorInactiveStyle: 'outline',
+    fontSize: 13,
+    // IBM Plex Mono — humaniste/chaleureuse, plus douce à lire que JetBrains
+    // Mono (au goût d'Anthony). Chargée via Google Fonts dans index.html, en
+    // phase avec --font-mono. Fallback Consolas (Windows). Aucune ligature
+    // (alignement TUI box-drawing U+2500 préservé).
+    fontFamily: "'IBM Plex Mono', ui-monospace, Consolas, monospace",
+    fontWeight: 400,
+    fontWeightBold: 600,
+    lineHeight: 1.3,
+    letterSpacing: 0,            // MUST stay 0 — tout tracking cisaille le box-drawing U+2500
+    minimumContrastRatio: 1,     // ne pas recolorer la chrome grise intentionnelle de Claude Code
+    drawBoldTextInBrightColors: false,
+    rescaleOverlappingGlyphs: true,
     theme: getXtermTheme(), allowProposedApi: true, scrollback: 5000,
   });
 
@@ -274,6 +291,32 @@ export function createTerminal(index: number): void {
 
   const container = document.getElementById(`term-${index}`)!;
   term.open(container);
+
+  // Renderer GPU avec fallback gracieux : WebGL → Canvas → DOM (built-in).
+  // try/catch + onContextLoss protègent les sessions Windows/ConPTY/Intel-GPU/RDP
+  // où un contexte WebGL peut échouer ou être perdu (sinon : pane blanche).
+  let activeRenderer: 'webgl' | 'canvas' | 'dom' = 'dom';
+  const loadCanvasFallback = (): void => {
+    try {
+      if (typeof CanvasAddon !== 'undefined') {
+        term.loadAddon(new CanvasAddon.CanvasAddon());
+        activeRenderer = 'canvas';
+      }
+    } catch { /* on garde le renderer DOM */ }
+  };
+  try {
+    if (typeof WebglAddon !== 'undefined') {
+      const webgl = new WebglAddon.WebglAddon();
+      webgl.onContextLoss(() => { try { webgl.dispose(); } catch { /* déjà disposé */ } loadCanvasFallback(); });
+      term.loadAddon(webgl);
+      activeRenderer = 'webgl';
+    } else {
+      loadCanvasFallback();
+    }
+  } catch {
+    loadCanvasFallback();
+  }
+
   requestAnimationFrame(() => fitAddon.fit());
 
   // AbortController qui sera abort() dans destroyTerminals : tous les
@@ -312,6 +355,8 @@ export function createTerminal(index: number): void {
 
   // Let Ctrl+1-8, Ctrl+[/], Ctrl+Shift+S, Ctrl+Shift+G bubble to document handler
   term.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+    // Ctrl/Cmd+K → laisse bulle au document handler pour ouvrir la command palette
+    if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'k' || e.key === 'K')) return false;
     if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key >= '1' && e.key <= '8') return false;
     if (e.ctrlKey && !e.shiftKey && (e.key === ']' || e.key === '[')) return false;
     if (e.ctrlKey && e.shiftKey && (e.key === 'S' || e.key === 'G')) return false;
@@ -333,5 +378,5 @@ export function createTerminal(index: number): void {
   });
 
   container.addEventListener('mousedown', () => setFocused(index), { signal });
-  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: autoFollow, abortController };
+  terminals[index] = { term, fitAddon, searchAddon, ws, index, followMode: autoFollow, abortController, renderer: activeRenderer };
 }

@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="preconnect" href="https://api.fontshare.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
   <link rel="stylesheet" href="https://api.fontshare.com/v2/css?f[]=general-sans@400,500,600,700&display=swap">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" integrity="sha384-8Xk9wy/gzEDUKrXtrmCFa2bBuK3BpjpDuL/p0SeKQX19Khl/M+lHOgD/CyYf7efP" crossorigin="anonymous">
   <link rel="stylesheet" href="/style.css">
@@ -134,6 +134,7 @@
           <p class="welcome-hint">Pick a project directory above, or jump back to a recent one</p>
           <div id="welcome-projects"></div>
           <p class="welcome-hint-keys">
+            <span><kbd>Ctrl</kbd>+<kbd>K</kbd> command palette</span>
             <span><kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>8</kbd> switch terminal</span>
             <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> search</span>
             <span><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> broadcast</span>
@@ -312,7 +313,9 @@
       <div class="help-section">
         <h4>Shortcuts</h4>
         <ul>
+          <li><b>Ctrl + K</b> — command palette (jump to a pane, run any action).</li>
           <li><b>Ctrl + Shift + F</b> — toggle Zen mode (hides launch bar + sidebar).</li>
+          <li><b>Ctrl + Shift + G</b> — search across all panes.</li>
           <li><b>?</b> — open this help.</li>
           <li><b>Esc</b> — close modal / clear group selection.</li>
         </ul>
@@ -335,6 +338,9 @@
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js" integrity="sha384-M169f14mRZOXm3hD/v2Ti0ThIT/RnAQagXA9nlE15yHAtrW19gdePJh/HaTzUOe/" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js" integrity="sha384-iF+jqbuti4XlB64clWgFWYEscb+UnSRv3VgVikGYZu+otNFnSHr7y7NcKfBnGizn" crossorigin="anonymous"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-search@0.15.0/lib/addon-search.js" crossorigin="anonymous"></script>
+  <!-- GPU renderers (paired with xterm core 5.5.0): WebGL with a Canvas fallback -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-webgl@0.18.0/lib/addon-webgl.js" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/@xterm/addon-canvas@0.7.0/lib/addon-canvas.js" crossorigin="anonymous"></script>
   <script defer src="/bundle.js"></script>
 </body>
 </html>
