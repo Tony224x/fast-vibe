@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response, NextFunction, Express } from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
@@ -8,7 +8,7 @@ import { PtyManager, MAX_WORKERS } from './pty-manager';
 import { Settings, Bookmark, Profile, DEFAULTS } from './types';
 import { improver } from './prompt-improver';
 
-const app = express();
+const app: Express = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/ws' });
 const ptyManager = new PtyManager();

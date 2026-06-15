@@ -3,8 +3,15 @@ import { setFocused, toggleExpand } from './terminal';
 import { toggleTerminalSearch, closeTerminalSearch, searchVisible, toggleGlobalSearch } from './search';
 import { toggleZen } from './preview';
 import { openHelp, closeHelp, isHelpOpen } from './help';
+import { togglePalette, closePalette, isPaletteOpen } from './palette';
 
 export function handleGlobalKeydown(e: KeyboardEvent): void {
+  // Command palette (Ctrl/Cmd+K) — highest priority, works from anywhere.
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+    e.preventDefault();
+    togglePalette();
+    return;
+  }
   if (e.key === '?' && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
     e.preventDefault();
     if (isHelpOpen()) closeHelp();
@@ -37,6 +44,7 @@ export function handleGlobalKeydown(e: KeyboardEvent): void {
     return;
   }
   if (e.key === 'Escape') {
+    if (isPaletteOpen()) { closePalette(); return; }
     if (isHelpOpen()) { closeHelp(); return; }
     if (searchVisible >= 0) { closeTerminalSearch(); return; }
     if (expandedIndex >= 0) { toggleExpand(expandedIndex); return; }

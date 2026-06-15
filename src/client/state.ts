@@ -13,6 +13,8 @@ export interface TerminalEntry {
   // attachés pour ce terminal (DOM + xterm). controller.abort() dans
   // destroyTerminals nettoie tout d'un coup → pas de leaks de listeners.
   abortController: AbortController;
+  // Renderer effectivement actif après le fallback WebGL→Canvas→DOM.
+  renderer?: 'webgl' | 'canvas' | 'dom';
 }
 
 export let workerCount = 4;

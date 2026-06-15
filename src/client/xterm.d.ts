@@ -29,3 +29,17 @@ declare namespace SearchAddon {
     clearDecorations(): void;
   }
 }
+
+declare namespace WebglAddon {
+  class WebglAddon {
+    constructor(preserveDrawingBuffer?: boolean);
+    onContextLoss(handler: (e: unknown) => void): void;
+    dispose(): void;
+  }
+}
+
+declare namespace CanvasAddon {
+  class CanvasAddon {
+    dispose(): void;
+  }
+}

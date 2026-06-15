@@ -24,6 +24,7 @@
   --bg-elev-3:       #34302c;          /* hover/elevated card */
   --bg-input:        #15110f;          /* input/code surface */
   --bg-overlay:      rgba(15, 12, 10, 0.72);
+  --seam:            #100d0b;          /* etched hairline between panes (1 notch darker than --bg-input) */
 
   /* ── Text ── */
   --fg:              #f4ede4;          /* primary text */
@@ -67,7 +68,7 @@
   /* ── Type ── */
   --font-ui:    'General Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
   --font-head:  'Outfit', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
-  --font-mono:  'JetBrains Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --font-mono:  'IBM Plex Mono', ui-monospace, Consolas, monospace;
 
   --t-xs:   11px;
   --t-2xs:  12px;
@@ -94,7 +95,7 @@
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.2);
   --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.45), 0 4px 8px rgba(0, 0, 0, 0.25);
   --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.55), 0 8px 16px rgba(0, 0, 0, 0.3);
-  --shadow-glow: 0 0 0 1px var(--brand-ring), 0 0 24px var(--brand-soft);
+  --shadow-glow: 0 0 0 1px var(--border-strong);
 
   /* ── Z-index scale ── */
   --z-resize: 5;
@@ -113,6 +114,7 @@
   --bg-elev-3:       #ffffff;
   --bg-input:        #ffffff;
   --bg-overlay:      rgba(28, 22, 18, 0.4);
+  --seam:            #e3ddd4;          /* etched hairline between panes (light) */
 
   --fg:              #2c2421;
   --fg-secondary:    #564943;
@@ -307,7 +309,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 .icon-btn:hover { background: var(--bg-elev-2); color: var(--fg); border-color: var(--border); }
 .icon-btn:active { transform: scale(0.94); }
-.icon-btn.active { color: var(--brand); background: var(--brand-soft); border-color: var(--brand-ring); }
+.icon-btn.active { color: var(--fg); background: var(--bg-elev-2); border-color: var(--border-strong); }
 #btn-bookmark.saved { color: var(--brand); }
 #btn-bookmark.saved .icon { fill: var(--brand); }
 
@@ -648,22 +650,25 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 6px;
+  gap: 1px;
+  padding: 0;
   min-height: 0;
-  background: var(--bg);
+  background: var(--seam);
+  border-radius: var(--r-lg);
+  overflow: hidden;
 }
 
 .terminal-pane {
   display: flex;
   flex-direction: column;
   background: var(--bg-input);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
   min-height: 0;
+  position: relative;
   container-type: inline-size;
-  transition: border-color var(--d-fast) var(--ease), box-shadow var(--d-base) var(--ease), flex var(--d-base) var(--ease);
+  transition: box-shadow var(--d-base) var(--ease), flex var(--d-base) var(--ease);
   animation: pane-fade-in var(--d-medium) var(--ease-out) backwards;
 }
 
@@ -673,9 +678,18 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .terminal-pane:nth-child(4) { animation-delay: 180ms; }
 
 .terminal-pane.focused {
-  border-color: var(--focus-ring);
-  box-shadow: 0 0 0 1px var(--brand-ring), 0 0 18px rgba(233, 93, 12, 0.05);
+  box-shadow: inset 0 0 0 1.5px var(--focus-ring);
+  z-index: 2;
 }
+/* Active-pane accent bar — orange as a verb, only on the focused header's left edge */
+.terminal-pane.focused .pane-header::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 2px;
+  background: var(--brand);
+}
+.terminal-pane.focused .pane-title { color: var(--fg); }
 
 #workers-grid, .workers-flex {
   flex: 1;
@@ -713,7 +727,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 #resize-handle::before, #sidebar-resize-handle::before {
   content: '';
   position: absolute;
-  background: var(--border-subtle);
+  background: var(--seam);
   border-radius: 2px;
   transition: background var(--d-fast) var(--ease),
               width var(--d-base) var(--ease-out),
@@ -756,33 +770,33 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .split-h:hover::after, .split-h.dragging::after,
 #resize-handle:hover::after, #resize-handle.dragging::after,
 #sidebar-resize-handle:hover::after, #sidebar-resize-handle.dragging::after {
-  opacity: 0.9;
+  opacity: 0.5;
 }
 
-/* Bloom: line thickens and glows brand on hover/drag */
+/* Bloom: line thickens to a neutral strong hairline on hover/drag — no glow */
 .split-v:hover::before, .split-v.dragging::before,
 #sidebar-resize-handle:hover::before, #sidebar-resize-handle.dragging::before {
   width: 4px;
-  background: var(--brand);
-  box-shadow: 0 0 12px var(--brand-soft);
+  background: var(--border-strong);
+  box-shadow: none;
 }
 .split-h:hover::before, .split-h.dragging::before,
 #resize-handle:hover::before, #resize-handle.dragging::before {
   height: 4px;
-  background: var(--brand);
-  box-shadow: 0 0 12px var(--brand-soft);
+  background: var(--border-strong);
+  box-shadow: none;
 }
 
-/* Snap indicator — extra glow when snapping to round percentage */
+/* Snap indicator — brand line marks the commit moment, no glow */
 .split-v.snapped::before, #sidebar-resize-handle.snapped::before {
-  width: 6px;
+  width: 4px;
   background: var(--brand);
-  box-shadow: 0 0 0 1px var(--brand-ring), 0 0 16px var(--brand);
+  box-shadow: none;
 }
 .split-h.snapped::before, #resize-handle.snapped::before {
-  height: 6px;
+  height: 4px;
   background: var(--brand);
-  box-shadow: 0 0 0 1px var(--brand-ring), 0 0 16px var(--brand);
+  box-shadow: none;
 }
 
 /* Live size label shown during drag */
@@ -808,7 +822,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 }
 
 /* Expanded pane */
-.terminal-pane.expanded { position: absolute; inset: 0; z-index: var(--z-pane-expand); border-radius: var(--r-lg); margin: 6px; }
+.terminal-pane.expanded { position: absolute; inset: 0; z-index: var(--z-pane-expand); }
 #terminals.has-expanded { position: relative; }
 #terminals.has-expanded > *:not(.expanded):not(:has(.expanded)) { display: none; }
 #terminals.has-expanded .workers-flex:has(.expanded) { position: absolute; inset: 0; z-index: var(--z-pane-expand); }
@@ -825,12 +839,12 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   align-items: center;
   gap: var(--s-3);
   padding: 4px var(--s-4);
-  background: var(--bg-elev-1);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-input);
+  border-bottom: 1px solid var(--seam);
   font-size: var(--t-2xs);
   user-select: none;
   flex-shrink: 0;
-  height: 30px;
+  height: 28px;
   cursor: pointer;
   position: relative;
   z-index: 6;
@@ -838,7 +852,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 
 .pane-title {
   font-weight: 600;
-  color: var(--fg);
+  color: var(--fg-secondary);
   display: inline-flex;
   align-items: center;
   font-size: var(--t-2xs);
@@ -885,7 +899,21 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   position: relative;
   background: var(--bg-input);
 }
-.pane-body .xterm { height: 100%; padding: 6px 8px; }
+.pane-body .xterm { height: 100%; padding: 8px 12px; }
+
+/* Terminal scrollbar — slimmer than the app default, recedes into the canvas */
+.pane-body .xterm-viewport::-webkit-scrollbar { width: 9px; }
+.pane-body .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.pane-body .xterm-viewport::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+.pane-body .xterm-viewport::-webkit-scrollbar-thumb:hover {
+  background: var(--fg-muted);
+  background-clip: padding-box;
+}
 
 /* Pane action buttons (always visible, dimmed) */
 .pane-actions {
@@ -1438,7 +1466,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   font-family: var(--font-head);
   font-size: var(--t-xs);
   font-weight: 700;
-  color: var(--brand);
+  color: var(--fg-muted);
   text-transform: uppercase;
   letter-spacing: 0.12em;
 }
@@ -2145,7 +2173,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .toast {
   background: var(--bg-elev-2);
   border: 1px solid var(--border-strong);
-  border-left: 3px solid var(--brand);
+  border-left: 3px solid var(--border-strong);
   border-radius: var(--r-md);
   padding: var(--s-3) var(--s-5);
   color: var(--fg);
@@ -2573,9 +2601,9 @@ body.layout-dragging .xterm-screen { pointer-events: none; }
   gap: var(--s-2);
   padding: 6px 8px 6px 14px;
   background: var(--bg-elev-2);
-  border: 1px solid var(--brand-ring);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-full);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--brand-soft);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45), 0 0 0 1px var(--border);
   z-index: 950;
   opacity: 0;
   pointer-events: none;
@@ -2615,5 +2643,150 @@ body.layout-dragging .xterm-screen { pointer-events: none; }
   align-items: center;
 }
 #layout-toolbar .btn-layout-clear:hover { color: var(--fg); background: var(--bg-elev-3); }
+
+/* ────────────────────────────────────────────────────────────
+   Command palette (Ctrl/Cmd+K) — spotlight surface
+   ──────────────────────────────────────────────────────────── */
+#palette-overlay {
+  position: fixed;
+  inset: 0;
+  background: var(--bg-overlay);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: var(--z-modal);
+  animation: fade-in var(--d-fast) var(--ease);
+}
+
+#palette {
+  width: min(560px, 92vw);
+  margin-top: 12vh;
+  max-height: 70vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xl);
+  box-shadow: var(--shadow-xl);
+  overflow: hidden;
+  animation: rise-in var(--d-base) var(--ease-out);
+}
+
+#palette-search {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding: 0 var(--s-5);
+  height: 52px;
+  border-bottom: 1px solid var(--seam);
+  flex-shrink: 0;
+}
+#palette-search-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+#palette-search-icon svg { width: 17px; height: 17px; }
+
+#palette-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: 0;
+  color: var(--fg);
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  letter-spacing: -0.01em;
+}
+#palette-input::placeholder { color: var(--fg-faint); }
+
+#palette-list {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--s-2) 0 var(--s-3);
+  min-height: 0;
+}
+
+.palette-section {
+  padding: var(--s-3) var(--s-5) var(--s-1);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+
+.palette-item {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  height: 40px;
+  margin: 0 var(--s-2);
+  padding: 0 var(--s-3);
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  position: relative;
+  color: var(--fg-secondary);
+}
+.palette-item.selected {
+  background: var(--brand-soft);
+  color: var(--fg);
+  box-shadow: inset 2px 0 0 0 var(--brand);
+}
+
+.palette-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+}
+.palette-icon svg { width: 15px; height: 15px; }
+.palette-item.selected .palette-icon { color: var(--fg); }
+
+.palette-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.palette-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--t-sm);
+}
+.palette-label mark {
+  background: transparent;
+  color: var(--brand);
+  font-weight: 600;
+}
+
+#palette kbd {
+  flex-shrink: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-xs);
+  padding: 1px 6px;
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+
+.palette-empty {
+  padding: var(--s-6) var(--s-5);
+  text-align: center;
+  color: var(--fg-muted);
+  font-size: var(--t-sm);
+}
 
 
