@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**fast-vibe** — web-based terminal multiplexer: **1 Pilot + N Workers** AI coding instances in parallel, with a control API so the Pilot can orchestrate the Workers. Supports Claude Code and Kiro CLI engines, with an optional no-pilot mode.
+**fast-vibe** — web-based terminal multiplexer: **N Workers** AI coding instances running in parallel, each a full independent CLI session, with a control API to drive them. Supports Claude Code and Kiro CLI engines.
 
 ## Architecture
 
@@ -12,18 +12,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 Browser (localhost:3333)              Node.js Backend
 ┌──────────────────────────────┐     ┌─────────────────────┐
 │  [📁 directory]  [Start]     │     │                     │
-├──────────────────────────────┤     │  PTY 0 (pilot)      │
-│  Pilot (term 0)              │◄──► │  PTY 1-N (workers)  │
-├──────────┬───────────────────┤ WS  │                     │
-│ Worker 1 │ Worker 2          │◄──► │  REST API:          │
+├──────────┬───────────────────┤     │  PTY 0..N-1         │
+│ Worker 1 │ Worker 2          │◄──► │  (workers)          │
+├──────────┼───────────────────┤ WS  │                     │
+│ Worker 3 │ Worker 4          │◄──► │  REST API:          │
 ├──────────┼───────────────────┤     │  /api/terminal/:id/ │
-│ Worker 3 │ Worker 4          │     │    send, output     │
+│ Worker 5 │ Worker 6          │     │    send, output     │
 └──────────┴───────────────────┘     └─────────────────────┘
 ```
 
 - **Engine selection**: Claude Code (`claude --dangerously-skip-permissions`) or Kiro CLI (`kiro-cli chat --trust-all-tools --tui`)
-- **No-pilot mode**: all terminals are independent workers (no orchestrator)
-- **Pilot controls Workers** via `curl` to the REST API (Claude engine only)
+- **All terminals are independent workers** (no orchestrator)
+- **Worker cap**: up to `MAX_WORKERS` (8); a RAM warning shows past 6 live workers
+- **Auto-compact**: idle Claude workers can auto-`/compact` after a configurable idle window (`autoCompactIdleMin`, Claude engine only)
 - Directory is chosen from the web UI before launching
 
 ## Commands
@@ -38,7 +39,7 @@ npm run dev    # Dev mode with auto-reload
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET/POST /api/settings` | Get/set settings (workers, previewUrl, engine, noPilot) |
+| `GET/POST /api/settings` | Get/set settings (workers, previewUrl, engine, autoCompactIdleMin) |
 | `POST /api/launch` `{"cwd":"..."}` | Start terminals in directory |
 | `POST /api/stop` | Kill all terminals |
 | `POST /api/terminal/:id/send` `{"text":"..."}` | Send input to terminal |
@@ -76,10 +77,10 @@ bloc compose intermédiaire.
 
 ## Key Files
 
-- `server.js` — Express + WebSocket + API routes, settings (engine, noPilot)
-- `lib/pty-manager.js` — PTY lifecycle: spawn, attach, kill, sendInput, getOutput, engine-aware launch
-- `public/app.js` — xterm.js terminals, WebSocket, launch bar logic, noPilot UI
-- `public/index.html` — Pilot + Workers grid layout, settings modal (engine select, noPilot checkbox)
+- `src/server.ts` — Express + WebSocket + API routes, settings (engine, autoCompactIdleMin)
+- `src/pty-manager.ts` — PTY lifecycle: spawn, attach, kill, sendInput, getOutput, engine-aware launch, `MAX_WORKERS`, idle auto-compact sweep
+- `src/client/*.ts` — xterm.js terminals, WebSocket, launch bar logic (bundled to `public/bundle.js`)
+- `public/index.html` — Workers grid layout, settings modal (engine select, auto-compact)
 - `public/style.css` — Dark theme
 
 ## Constraints

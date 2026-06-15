@@ -1,4 +1,4 @@
-import { noPilot, workerCount, terminals, sidebarWidth, setState } from './state';
+import { terminals, sidebarWidth, setState } from './state';
 import { postJson, deleteJson } from './utils';
 import { fitAll, fitAllRAF, scheduleFitAll } from './terminal';
 import { showToast } from './toast';
@@ -263,14 +263,17 @@ export async function sendBroadcast(): Promise<void> {
   const input = document.getElementById('broadcast-input') as HTMLInputElement;
   const text = input.value.trim();
   if (!text) return;
-  const startIdx = noPilot ? 0 : 1;
-  const total = noPilot ? workerCount : 1 + workerCount;
+  // Broadcast vers tous les panes vivants (les indices peuvent être
+  // non-contigus après add/remove de workers → on itère sur `terminals`).
   const promises: Promise<Response>[] = [];
-  for (let i = startIdx; i < total; i++) {
-    promises.push(postJson(`/api/terminal/${i}/send`, { text }));
-  }
+  let count = 0;
+  terminals.forEach((t) => {
+    if (!t) return;
+    promises.push(postJson(`/api/terminal/${t.index}/send`, { text }));
+    count++;
+  });
   await Promise.all(promises);
-  showToast(`Broadcast sent to ${total - startIdx} workers`);
+  showToast(`Broadcast sent to ${count} workers`);
   input.value = '';
 }
 
@@ -458,55 +461,3 @@ export function initSidebarResize(): void {
   });
 }
 
-export function initPilotResize(): void {
-  const handle = document.getElementById('resize-handle');
-  if (!handle) return;
-  const h = handle;
-
-  let startY: number, startPilotH: number, container: HTMLElement, label: HTMLDivElement;
-
-  h.addEventListener('dblclick', () => {
-    const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
-    if (pilot) { pilot.style.flex = ''; fitAll(); }
-  });
-
-  h.addEventListener('mousedown', (e) => {
-    e.preventDefault();
-    const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
-    if (!pilot || pilot.classList.contains('hidden')) return;
-    container = document.getElementById('terminals')!;
-    startY = e.clientY;
-    startPilotH = pilot.offsetHeight;
-    h.classList.add('dragging');
-    document.body.classList.add('resizing', 'resizing-row');
-    label = showResizeLabel();
-    document.addEventListener('mousemove', onMove);
-    document.addEventListener('mouseup', onUp);
-  });
-
-  function onMove(e: MouseEvent) {
-    const pilot = document.querySelector('.terminal-pane.pilot') as HTMLElement | null;
-    if (!pilot) return;
-    const totalH = container.offsetHeight;
-    const rawH = Math.max(PANE_MIN, Math.min(totalH - PANE_MIN, startPilotH + (e.clientY - startY)));
-    let pct = (rawH / totalH) * 100;
-    const s = snap(pct);
-    pct = s.value;
-    h.classList.toggle('snapped', s.snapped);
-    pilot.style.flex = `0 0 ${pct.toFixed(1)}%`;
-    label.textContent = `Pilot ${pct.toFixed(0)}%`;
-    label.classList.toggle('snapped', s.snapped);
-    label.style.left = `${e.clientX}px`;
-    label.style.top = `${e.clientY - 24}px`;
-    fitAllRAF();
-  }
-
-  function onUp() {
-    h.classList.remove('dragging', 'snapped');
-    document.body.classList.remove('resizing', 'resizing-row');
-    hideResizeLabel();
-    document.removeEventListener('mousemove', onMove);
-    document.removeEventListener('mouseup', onUp);
-    fitAll();
-  }
-}

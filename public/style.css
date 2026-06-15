@@ -677,13 +677,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   box-shadow: 0 0 0 1px var(--brand-ring), 0 0 18px rgba(233, 93, 12, 0.05);
 }
 
-.terminal-pane.pilot {
-  flex: 0 0 35%;
-  min-height: 100px;
-}
-.terminal-pane.pilot .pane-header { background: var(--bg-elev-2); }
-.terminal-pane.pilot .pane-title { color: var(--brand); font-weight: 700; }
-
 #workers-grid, .workers-flex {
   flex: 1;
   display: flex;
@@ -713,7 +706,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
    keep the generous 40px hit zone — no scrollbar conflict. */
 .split-v { width: 16px; cursor: col-resize; margin: 0 -5px; }
 .split-h { height: 40px; cursor: row-resize; margin: -19px 0; }
-#resize-handle { height: 40px; cursor: row-resize; margin: -19px 6px; }
 #sidebar-resize-handle { width: 16px; cursor: col-resize; margin: 0 -5px; }
 
 /* Visible center line — thin by default, blooms on hover/drag */
@@ -1618,7 +1610,6 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background: var(--brand);
   border-radius: var(--r-lg) 0 0 var(--r-lg);
 }
-.status-card.pilot-card { border-left-width: 3px; border-left-color: var(--brand); }
 
 .status-card-header {
   display: flex;

@@ -14,7 +14,6 @@ describe('Settings API', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('workers');
     expect(res.body).toHaveProperty('engine');
-    expect(res.body).toHaveProperty('noPilot');
     expect(res.body).toHaveProperty('trustMode');
     expect(res.body).toHaveProperty('useWSL');
     expect(res.body).toHaveProperty('autoFocus');
@@ -61,16 +60,6 @@ describe('Settings API', () => {
   });
 
   describe('boolean coercion', () => {
-    test('noPilot=1 coerces to true', async () => {
-      const res = await request(app).post('/api/settings').set(HEADER).send({ noPilot: 1 });
-      expect(res.body.noPilot).toBe(true);
-    });
-
-    test('noPilot=0 coerces to false', async () => {
-      const res = await request(app).post('/api/settings').set(HEADER).send({ noPilot: 0 });
-      expect(res.body.noPilot).toBe(false);
-    });
-
     test('trustMode="yes" coerces to true', async () => {
       const res = await request(app).post('/api/settings').set(HEADER).send({ trustMode: 'yes' });
       expect(res.body.trustMode).toBe(true);
@@ -289,7 +278,7 @@ describe('CSRF middleware', () => {
 
 describe('Terminal control API', () => {
   beforeAll(() => {
-    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude', noPilot: false });
+    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude' });
   });
 
   afterAll(() => {
@@ -389,8 +378,12 @@ describe('Terminal control API', () => {
 // ── Suggest API (from suggest.test.js) ──
 
 describe('Suggest API', () => {
-  beforeAll(() => {
-    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude', noPilot: false, suggestMode: 'static' });
+  beforeAll(async () => {
+    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude', suggestMode: 'static' });
+    // Les spawns sont échelonnés (SPAWN_STAGGER_MS) : le worker 0 démarre tout
+    // de suite, le worker 1 ~150ms après. Les tests /suggest/1/send ciblent le
+    // worker 1 → on attend qu'il soit vivant avant de lancer les tests.
+    await new Promise((r) => setTimeout(r, 400));
   });
 
   afterAll(() => {

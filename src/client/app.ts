@@ -8,7 +8,7 @@ import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } 
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, initPilotResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
 import { escapeHtml, postJson, deleteJson } from './utils';
 import { initHelp } from './help';
 import { initVoice, toggleVoiceCapture } from './voice';
@@ -23,7 +23,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     setState('workerCount', s.workers || 4);
     setState('previewUrl', s.previewUrl || '');
     setState('engine', s.engine || 'claude');
-    setState('noPilot', !!s.noPilot);
     setState('trustMode', !!s.trustMode);
     setState('useWSL', !!s.useWSL);
     if (s.lastCwd) (document.getElementById('cwd-input') as HTMLInputElement).value = s.lastCwd;
@@ -32,6 +31,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setState('suggestMode', s.suggestMode || 'off');
     setState('theme', s.theme || 'dark');
     setState('localSTT', !!s.localSTT);
+    setState('autoCompactIdleMin', Number(s.autoCompactIdleMin) || 0);
     applyTheme();
   } catch {}
 
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (banner && details && resumeBtn && discardBtn) {
           const ageMin = info.ageMs != null ? Math.round(info.ageMs / 60000) : null;
           const ageStr = ageMin == null ? '' : ageMin < 1 ? ' · il y a < 1 min' : ` · il y a ${ageMin} min`;
-          details.textContent = `${info.cwd} · ${info.engine}${info.noPilot ? ', no pilot' : ''} · ${info.workers} workers${ageStr}`;
+          details.textContent = `${info.cwd} · ${info.engine} · ${info.workers} workers${ageStr}`;
           banner.classList.remove('hidden');
           resumeBtn.addEventListener('click', async () => {
             (resumeBtn as HTMLButtonElement).disabled = true;
@@ -175,7 +175,7 @@ document.addEventListener('DOMContentLoaded', async () => {
       const wrapper = btn.closest('.pane-prompts-wrapper') as HTMLElement | null;
       const menu = wrapper?.querySelector('.pane-prompts-menu') as HTMLElement | null;
       if (!menu) return;
-      // Lazy-fill the menu (the static pilot pane in index.html ships empty)
+      // Lazy-fill the menu (panes ship with an empty prompts menu)
       if (!menu.children.length) {
         menu.innerHTML = QUICK_PROMPTS.map(p =>
           `<button class="prompt-item" data-action="prompt-pick" data-index="${idx}" data-prompt-id="${p.id}">` +
@@ -276,9 +276,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Keyboard shortcuts
   document.addEventListener('keydown', handleGlobalKeydown);
 
-  // Sidebar & pilot resize
+  // Sidebar resize
   initSidebarResize();
-  initPilotResize();
 
   // System theme changes
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {

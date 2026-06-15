@@ -10,11 +10,21 @@ import { matchStaticSuggestion } from './suggest-patterns';
 import type { Slot, Suggestion, SuggesteurState, TerminalStatus, LaunchOptions } from './types';
 
 export const MAX_BUFFER = 50 * 1024;
+// Cap dur sur le nombre de workers vivants (hors tombstones).
+// Chaque worker = une instance Claude Code complète (~150-400 MB). Sans cap,
+// addWorker peut être appelé indéfiniment et faire exploser la RAM machine.
+export const MAX_WORKERS = 8;
 // Kiro TUI redessine fréquemment (~10×/s avec spinners + status bars) avec
 // des séquences ANSI lourdes. On augmente la cible buffer pour ce moteur
 // afin de réduire les rotations et préserver l'historique au reattach.
 const MAX_BUFFER_KIRO = 200 * 1024;
 const WS_HIGH_WATER = 128 * 1024;
+// Décalage entre deux spawns successifs au lancement/restore. Sur Windows,
+// spawner N PTY (ConPTY) + N claude.exe simultanément crée un pic CPU/disque
+// qui ralentit le démarrage et fiabilise mal chaque worker. On échelonne les
+// spawns au-delà du premier pour lisser le pic. Le premier worker est spawné
+// de façon synchrone (réactivité + état immédiat pour les tests).
+const SPAWN_STAGGER_MS = 150;
 // ANSI escape sequences :
 //   - CSI:  ESC [ ... final-byte (0x40-0x7e) — séquences couleur, curseur, etc.
 //   - OSC:  ESC ] ... terminator (BEL=0x07 OU ST=ESC \\) — titre, hyperlinks, OSC 52
@@ -40,65 +50,13 @@ function log(tag: string, ...args: unknown[]): void {
   console.log(`[${ts}] [${tag}]`, ...args);
 }
 
-export const PILOT_PROMPT_FILE = path.join(__dirname, '..', '.pilot-prompt.md');
 const SUGGEST_PROMPT_FILE = path.join(__dirname, '..', '.suggest-prompt.md');
-
-export function writePilotPrompt(workerCount: number): void {
-  const ids = Array.from({ length: workerCount }, (_, i) => i + 1).join(', ');
-  fs.writeFile(PILOT_PROMPT_FILE, `You are the PILOT orchestrator. You have ${workerCount} EXTERNAL worker Claude Code instances (workers 1-${workerCount}) running in separate terminals. You MUST delegate work to them via a REST API.
-
-## CRITICAL RULES
-
-- NEVER use the Agent tool or launch subagents. You have REAL external workers for that.
-- ALWAYS delegate parallelizable work to the external workers via curl commands below.
-- You are the coordinator: break tasks, dispatch to workers, monitor, verify, report.
-- Do NOT do the workers' job yourself. Your role is to orchestrate, not implement.
-
-## COMMANDS (use via Bash tool)
-
-Send a task to worker N (replace N with 1-${workerCount}):
-curl -s -X POST http://localhost:3333/api/terminal/N/send -H "Content-Type: application/json" -H "X-Requested-With: FastVibe" -d '{"text":"your detailed instruction here"}'
-
-Read worker N output:
-curl -s http://localhost:3333/api/terminal/N/output?last=5000
-
-Check all statuses:
-curl -s http://localhost:3333/api/status
-
-Compact a worker's context (free memory, keep summary):
-curl -s -X POST http://localhost:3333/api/terminal/N/compact -H "X-Requested-With: FastVibe"
-
-Clear a worker's context (full reset, start fresh):
-curl -s -X POST http://localhost:3333/api/terminal/N/clear -H "X-Requested-With: FastVibe"
-
-## CONTEXT MANAGEMENT
-
-Workers have limited context windows. You MUST manage their context:
-- After a worker completes a task, ALWAYS compact it: curl -s -X POST http://localhost:3333/api/terminal/N/compact -H "X-Requested-With: FastVibe"
-- When switching to a completely different topic, clear instead: curl -s -X POST http://localhost:3333/api/terminal/N/clear -H "X-Requested-With: FastVibe"
-- Before sending a new task, check if the worker needs compacting first
-
-## WORKFLOW
-
-1. Analyze the user's request and break it into ${workerCount} sub-tasks
-2. Send each sub-task to a different worker using curl (worker IDs: ${ids})
-3. Poll their output every 30-60s to monitor progress
-4. When all workers finish, read their outputs and verify quality
-5. **Compact all workers** after verifying results
-6. Report a summary to the user
-
-## IMPORTANT
-
-The workers are full Claude Code instances with file access. Give them clear, specific instructions including file paths and expected outcomes. They can read, write, and run code independently.
-`, () => {});
-}
 
 export class PtyManager {
   count: number;
   cwd: string;
   slots: Slot[];
   engine: string;
-  noPilot: boolean;
   trustMode: boolean;
   useWSL: boolean;
   suggestMode: string;
@@ -109,12 +67,23 @@ export class PtyManager {
   logsEnabled: boolean;
   logsDir: string;
   autoRestart: boolean;
+  // Seuil d'inactivité (minutes) avant auto-compactage d'un worker claude
+  // idle. 0 = désactivé. Voir Settings.autoCompactIdleMin.
+  autoCompactIdleMin: number;
+  private _compactSweepTimer: ReturnType<typeof setInterval> | null = null;
   // Buffer cap par slot, calibré selon l'engine actif. Kiro TUI a besoin de
   // plus pour préserver l'historique TUI complet entre rotations.
   maxBuffer: number;
   // Cache de résolution de binaires (Windows : node-pty ne résout pas
   // PATHEXT — il faut un path absolu ou l'extension exacte).
   private _binaryCache: Map<string, string> = new Map();
+  // Jeton de génération incrémenté à chaque launchAll/restoreAll/killAll. Les
+  // spawns échelonnés (différés via setTimeout) vérifient ce jeton avant de
+  // s'exécuter — si un stop/relaunch a eu lieu entre-temps, le spawn obsolète
+  // est annulé (sinon il ressusciterait un worker dans une grille déjà détruite).
+  private _launchGen: number = 0;
+  // Timers des spawns échelonnés en vol, clearés dans killAll().
+  private _staggerTimers: Array<ReturnType<typeof setTimeout>> = [];
   // Notification de mutation d'état (pour persistance .session-state.json)
   onStateChange?: () => void;
 
@@ -123,13 +92,13 @@ export class PtyManager {
     this.cwd = process.cwd();
     this.slots = [];
     this.engine = 'claude';
-    this.noPilot = false;
     this.trustMode = false;
     this.useWSL = false;
     this.suggestMode = 'off';
     this.logsEnabled = false;
     this.logsDir = '';
     this.autoRestart = true;
+    this.autoCompactIdleMin = 0;
     this.maxBuffer = MAX_BUFFER;
     // Suggesteur state
     this.suggesteur = null;
@@ -144,13 +113,34 @@ export class PtyManager {
     }
   }
 
+  // Spawn une liste d'indices de slots en échelonnant les spawns au-delà du
+  // premier (voir SPAWN_STAGGER_MS) pour lisser le pic ConPTY/CPU au démarrage.
+  // Le 1er est synchrone (réactivité + état immédiat pour les tests) ; les
+  // suivants sont différés et gardés par le jeton de génération courant — un
+  // stop/relaunch entre-temps les annule.
+  private _spawnStaggered(indices: number[]): void {
+    if (indices.length === 0) return;
+    const gen = this._launchGen;
+    this.spawn(indices[0], this.cwd);
+    for (let k = 1; k < indices.length; k++) {
+      const index = indices[k];
+      const timer = setTimeout(() => {
+        if (gen !== this._launchGen) return; // génération obsolète → annulé
+        const slot = this.slots[index];
+        if (!slot || slot.removed) return;
+        this.spawn(index, this.cwd);
+      }, k * SPAWN_STAGGER_MS);
+      timer.unref?.();
+      this._staggerTimers.push(timer);
+    }
+  }
+
   spawn(index: number, cwd?: string): IPty | null {
     if (index >= this.slots.length) return null;
     const slot = this.slots[index];
     if (slot.pty) return slot.pty;
 
     const workdir = cwd || this.cwd;
-    const isPilot = index === 0 && !this.noPilot;
 
     // ── Stratégie de spawn par engine ──
     //
@@ -162,14 +152,14 @@ export class PtyManager {
     //  - Plus de prompt detection ($#>) qui peut fire sur du contenu Kiro.
     //
     // Pour Claude : on garde le shell parent à cause des aliases (doskey/alias)
-    // et de la commande complexe (--append-system-prompt-file, --session-id, etc.)
-    // qui sont plus simples à composer en shell que en argv.
+    // et de la commande complexe (--session-id, etc.) qui sont plus simples à
+    // composer en shell que en argv.
     //
     // Pour le suggesteur (Claude headless) : utilise toujours le shell wrapper.
     let proc: IPty;
     let launch: ReturnType<typeof this._buildLaunch>;
     try {
-      launch = this._buildLaunch(workdir, isPilot, slot);
+      launch = this._buildLaunch(workdir, slot);
       proc = pty.spawn(launch.shell, launch.args, {
         name: 'xterm-256color',
         cols: 80,
@@ -199,6 +189,8 @@ export class PtyManager {
     slot.pty = proc;
     slot.startedAt = new Date().toISOString();
     slot.startedAtMs = Date.now();
+    slot.lastActivityMs = Date.now();
+    slot.compactedWhileIdle = false;
     slot.chunks = [];
     slot.chunksTotalLen = 0;
     slot.joinedCache = '';
@@ -206,8 +198,12 @@ export class PtyManager {
     slot.dirty = false;
     slot.crashed = false;
     slot.wsDesynced = false;
-    const role = isPilot ? 'pilot' : `worker-${index}`;
-    log('spawn', `${role} pid=${proc.pid} cwd=${workdir} engine=${this.engine} mode=${launch.mode}`);
+    // pty.spawn a réussi → à partir de maintenant la session existe (ou est en
+    // train d'être créée par claude). Les prochains lancements doivent donc
+    // faire --resume. On le pose ICI (pas dans _buildLaunch) pour qu'un spawn
+    // qui throw ne poisonne pas le flag (cf. _buildLaunch).
+    if (this.engine === 'claude' && slot.sessionId) slot.resume = true;
+    log('spawn', `worker-${index} pid=${proc.pid} cwd=${workdir} engine=${this.engine} mode=${launch.mode}`);
 
     // Reset restartCount après 60s d'uptime stable. Évite que des crashes
     // espacés (ex: une fois par heure) finissent par épuiser le budget retry.
@@ -223,6 +219,10 @@ export class PtyManager {
       slot.chunks.push(data);
       slot.chunksTotalLen += data.length;
       slot.dirty = true;
+      // Horodatage du dernier output : sert à mesurer l'inactivité pour
+      // l'auto-compactage. On ne touche PAS compactedWhileIdle ici — l'output
+      // du /compact lui-même ne doit pas être pris pour du nouveau travail.
+      slot.lastActivityMs = Date.now();
       // Rotation : on déclenche uniquement quand on dépasse 1.5× la cible
       // (au lieu de 1×) ou que le nombre de chunks devient pathologique
       // (>200 — Kiro TUI peut spammer 50-100 micro-chunks par redraw).
@@ -260,19 +260,34 @@ export class PtyManager {
       } catch { /* WS gone */ }
     });
 
-    // Si le launch a une commande à taper après le prompt shell (mode 'shell'),
-    // on installe le détecteur de prompt. Sinon (mode 'direct'), le binaire
-    // tourne déjà dans le PTY et il n'y a rien à injecter.
-    if (launch.injectCmd) {
-      this._injectShellCommand(proc, launch.injectCmd);
-    }
+    // Watchdog de démarrage (backstop) : avec le spawn direct, le binaire
+    // (claude/kiro) tourne déjà dans le PTY — il n'y a plus rien à injecter.
+    // Mais s'il hang ou est introuvable de façon silencieuse, le pane resterait
+    // muet sans jamais exit (donc sans recovery). Si après 15s le PTY est
+    // toujours vivant ET n'a émis AUCUN octet (zéro octet = réellement bloqué ;
+    // un binaire sain émet ses séquences d'init immédiatement), on prévient
+    // l'utilisateur au lieu d'un pane noir silencieux.
+    if (slot.startupTimer) clearTimeout(slot.startupTimer);
+    slot.startupTimer = setTimeout(() => {
+      slot.startupTimer = null;
+      if (slot.pty === proc && slot.chunksTotalLen === 0) {
+        log('startup-stall', `terminal=${index} pid=${proc.pid} no output after 15s`);
+        try {
+          if (slot.ws && slot.ws.readyState === 1) {
+            slot.ws.send(`\r\n\x1b[33m[fast-vibe] Aucun affichage après 15s — ${this.engine} est peut-être introuvable ou bloqué. Cliquez Restart, ou vérifiez l'installation.\x1b[0m\r\n`);
+          }
+        } catch { /* WS gone */ }
+      }
+    }, 15_000);
+    slot.startupTimer.unref?.();
 
     proc.onExit(({ exitCode }: { exitCode: number }) => {
-      log('exit', `${role} pid=${proc.pid} code=${exitCode}`);
+      log('exit', `worker-${index} pid=${proc.pid} code=${exitCode}`);
       if (slot.pty === proc) {
         slot.pty = null;
       }
       if (slot.uptimeTimer) { clearTimeout(slot.uptimeTimer); slot.uptimeTimer = null; }
+      if (slot.startupTimer) { clearTimeout(slot.startupTimer); slot.startupTimer = null; }
       try {
         if (slot.ws && slot.ws.readyState === 1) {
           slot.ws.send(`\r\n\x1b[90m[Process exited with code ${exitCode}]\x1b[0m\r\n`);
@@ -315,7 +330,7 @@ export class PtyManager {
 
   // Construit la commande à lancer pour un slot. Renvoie les args pty.spawn
   // + une éventuelle commande à taper via le shell parent (mode 'shell').
-  private _buildLaunch(workdir: string, isPilot: boolean, slot: Slot): {
+  private _buildLaunch(workdir: string, slot: Slot): {
     shell: string;
     args: string[];
     cwd: string | undefined;
@@ -370,85 +385,62 @@ export class PtyManager {
       };
     }
 
-    // ── Claude : shell wrapper (alias + flags complexes) ──
-    let shell: string;
-    let shellArgs: string[] = [];
-    let cwd: string | undefined;
-    if (this.useWSL && isWin) {
-      shell = 'wsl.exe';
-      shellArgs = ['--cd', workdir];
-      cwd = undefined;
-    } else {
-      shell = isWin ? 'cmd.exe' : (process.env.SHELL || '/bin/bash');
-      cwd = workdir;
-    }
-
-    const nl = (isWin && !this.useWSL) ? '\r' : '\n';
-    const claudeCmd = this.trustMode ? 'claude --dangerously-skip-permissions' : 'claude';
-    const alias = isWin && !this.useWSL ? `doskey c=${claudeCmd} $*` : `alias c="${claudeCmd}"`;
+    // ── Claude : spawn direct ──
+    //
+    // Historiquement on passait par un shell parent (cmd.exe/bash) qui posait
+    // un alias `c` puis "tapait" la commande claude en guettant le prompt.
+    // C'était la cause racine n°1 des "panes noirs" : la détection de prompt
+    // est une course de timing qui rate sous charge (spawns simultanés,
+    // démarrage à froid) → commande perdue → pane figé sur un prompt nu qui
+    // n'exit jamais → aucune recovery.
+    //
+    // On lance donc claude DIRECTEMENT dans le PTY (comme Kiro). Conséquences :
+    //  - plus de course de prompt → démarrage déterministe
+    //  - kill() cible claude.exe directement (plus de couche cmd.exe) → moins
+    //    d'orphelins qui gardent le verrou de session → --resume fiable
+    //  - claude exit → PTY exit → onExit → _scheduleRestart (recovery fast-fail
+    //    inchangée ; "No conversation found" est imprimé direct dans le PTY)
+    //  - trade-off : plus d'alias `c`, et le pane se ferme après /exit (code 0,
+    //    pas d'auto-restart) → bouton Restart.
+    const claudeArgs: string[] = [];
+    if (this.trustMode) claudeArgs.push('--dangerously-skip-permissions');
 
     // Stratégie sessions persistantes :
     //  - 1er lancement : --session-id <uuid>
     //  - Reboot : --resume <uuid>
     const sid = slot.sessionId;
-    const sessionFlag = sid
-      ? (slot.resume ? `--resume ${sid}` : `--session-id ${sid}`)
-      : '';
-
-    let cmd = claudeCmd;
-    if (isPilot) {
-      const promptPath = PILOT_PROMPT_FILE.replace(/\\/g, '/');
-      cmd = `${claudeCmd} --disallowedTools Agent --append-system-prompt-file "${promptPath}"`;
+    if (sid) {
+      // Lecture seule de slot.resume ici. Le passage à `resume = true` se fait
+      // dans spawn() APRÈS un pty.spawn réussi (cf. là-bas) : sinon un spawn qui
+      // throw (binaire introuvable) basculerait resume=true pour une session que
+      // claude n'a jamais créée → le prochain Restart ferait `--resume <uuid>`
+      // d'une session inexistante → "No conversation found" garanti.
+      claudeArgs.push(slot.resume ? '--resume' : '--session-id', sid);
     }
-    if (sessionFlag) cmd = `${cmd} ${sessionFlag}`;
 
-    if (sid && !slot.resume) slot.resume = true;
+    if (this.useWSL && isWin) {
+      return {
+        shell: 'wsl.exe',
+        args: ['--cd', workdir, '--', 'claude', ...claudeArgs],
+        cwd: undefined,
+        mode: 'direct',
+        injectCmd: null,
+      };
+    }
 
-    // Auto-exit conditionnel du shell parent : on chain `|| exit`, donc
-    // exit ne s'exécute QUE si claude a échoué (non-zero). Conséquences :
-    //  - claude exit 0 (user tape /exit, Ctrl+D propre) → shell reste
-    //    vivant → user peut taper d'autres commandes shell, ou `c` pour
-    //    relancer claude via l'alias. Pas d'auto-restart intempestif.
-    //  - claude exit non-0 (--resume locké, crash) → shell exit avec le
-    //    code de claude → onExit fire → _scheduleRestart décide :
-    //      • fast-fail (<10s, --resume) : régénère uuid + restart
-    //      • stable crash (>=10s) : pas d'auto-restart, message gris
-    //
-    // Sans ce `||`, le shell reste éternellement vivant après que claude
-    // exit, la PTY ne fait jamais onExit, et la recovery fast-fail ne
-    // peut jamais se déclencher → pane figé sur l'erreur claude.
-    //
-    // cmd.exe et bash partagent la même sémantique pour `||`. Pour le
-    // chainage : ` || ` (avec espaces) marche dans les deux.
-    const exitChain = ' || exit';
+    // node-pty/CreateProcess sur Windows ne résout pas PATHEXT → on résout le
+    // chemin absolu du binaire (where.exe, caché). Fallback au nom nu si la
+    // résolution échoue : laisse node-pty tenter, et le catch de spawn()
+    // affiche un message rouge clair si claude est réellement introuvable.
+    // (Le fallback garde aussi les tests verts : node-pty y est mocké.)
+    const claudeBin = this._resolveBinary('claude') || 'claude';
     return {
-      shell,
-      args: shellArgs,
-      cwd,
-      mode: 'shell',
-      injectCmd: alias + nl + cmd + exitChain + nl,
+      shell: claudeBin,
+      args: claudeArgs,
+      cwd: workdir,
+      mode: 'direct',
+      injectCmd: null,
     };
-  }
-
-  // Détecte le prompt shell ($#>) et injecte la commande. Fallback timeout 5s.
-  private _injectShellCommand(proc: IPty, cmd: string): void {
-    let launched = false;
-    const onData = (data: string): void => {
-      if (launched) return;
-      if (/[$#>]\s*$/.test(data)) {
-        launched = true;
-        launchDisposable.dispose();
-        safeWrite(proc, cmd);
-      }
-    };
-    const launchDisposable = proc.onData(onData);
-    setTimeout(() => {
-      if (!launched) {
-        launched = true;
-        try { safeWrite(proc, cmd); } catch { /* PTY gone */ }
-      }
-      launchDisposable.dispose();
-    }, 5000);
   }
 
   // Replanifie un restart après exit non-souhaité. Backoff exponentiel
@@ -584,6 +576,7 @@ export class PtyManager {
             return;
           }
           if (parsed.type === 'raw' && typeof parsed.data === 'string') {
+            this._markUserActivity(slot);
             safeWrite(slot.pty, parsed.data);
             return;
           }
@@ -591,6 +584,7 @@ export class PtyManager {
       }
 
       if (slot.pty) {
+        this._markUserActivity(slot);
         safeWrite(slot.pty, msg.replace(/\n/g, '\r'));
       }
     });
@@ -657,6 +651,7 @@ export class PtyManager {
     if (index >= this.slots.length) return false;
     const slot = this.slots[index];
     if (!slot.pty) return false;
+    this._markUserActivity(slot);
     // Multi-line text: wrap in bracketed-paste so embedded newlines stay
     // as newlines instead of being interpreted as Enter (submit).
     // Single-line text: convert any \n to \r for plain typing.
@@ -683,8 +678,17 @@ export class PtyManager {
     if (index >= this.slots.length) return false;
     const slot = this.slots[index];
     if (!slot.pty) return false;
+    this._markUserActivity(slot);
     safeWrite(slot.pty, command + '\r');
     return true;
+  }
+
+  // Signale une entrée utilisateur réelle (frappe clavier, send API, raw WS).
+  // Reset le flag compactedWhileIdle pour autoriser un nouveau compactage après
+  // la prochaine période d'inactivité, et rafraîchit l'horloge d'activité.
+  private _markUserActivity(slot: Slot): void {
+    slot.lastActivityMs = Date.now();
+    slot.compactedWhileIdle = false;
   }
 
   private _getBuffer(slot: Slot): string {
@@ -703,7 +707,7 @@ export class PtyManager {
     if (slot.chunksTotalLen === 0) return '';
     // Cache strippé : on ne re-parse les ANSI que si le buffer brut a changé
     // depuis le dernier appel. Sur un Kiro TUI qui spamme des frames mais
-    // dont le pilot poll régulièrement, c'est ~100× plus rapide.
+    // dont l'API poll régulièrement, c'est ~100× plus rapide.
     // Important : invalider aussi quand `dirty=true` (du nouveau contenu est
     // arrivé même si on n'a pas appelé _getBuffer entre temps).
     if (slot.dirty || !slot.strippedCache) {
@@ -713,24 +717,70 @@ export class PtyManager {
     return slot.strippedCache.slice(-lastN);
   }
 
-  // Launch 1 pilot + N workers
+  // ── Auto-compactage des workers idle ──
+
+  // Active/désactive et (re)démarre le sweep. min=0 → off. Idempotent.
+  setAutoCompactIdleMin(min: number): void {
+    this.autoCompactIdleMin = Math.max(0, Math.floor(min || 0));
+    this._startCompactSweep();
+  }
+
+  private _startCompactSweep(): void {
+    this._stopCompactSweep();
+    if (!(this.autoCompactIdleMin > 0) || this.engine !== 'claude') return;
+    // Sweep toutes les 2 min — granularité suffisante pour un seuil en minutes,
+    // négligeable en CPU. unref() pour ne pas tenir le process en vie.
+    this._compactSweepTimer = setInterval(() => this._autoCompactSweep(), 120_000);
+    this._compactSweepTimer.unref?.();
+  }
+
+  private _stopCompactSweep(): void {
+    if (this._compactSweepTimer) {
+      clearInterval(this._compactSweepTimer);
+      this._compactSweepTimer = null;
+    }
+  }
+
+  private _autoCompactSweep(): void {
+    if (!(this.autoCompactIdleMin > 0) || this.engine !== 'claude') return;
+    const idleMs = this.autoCompactIdleMin * 60_000;
+    const now = Date.now();
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      if (!slot.pty || slot.removed || slot.compactedWhileIdle) continue;
+      const last = slot.lastActivityMs ?? slot.startedAtMs ?? now;
+      if (now - last < idleMs) continue;
+      // Ne compacter que si le worker est au prompt (pas en plein rendu ni en
+      // train d'attendre une confirmation). Sinon on retente au sweep suivant.
+      const tail = this.getOutput(i, 200).trimEnd();
+      if (!/[❯>$#]$/.test(tail)) continue;
+      // sendCommand() appelle _markUserActivity (reset lastActivityMs + flag) :
+      // on repose donc compactedWhileIdle=true APRÈS pour bloquer toute
+      // re-compaction jusqu'à une vraie entrée utilisateur.
+      this.sendCommand(i, '/compact');
+      slot.compactedWhileIdle = true;
+      log('auto-compact', `terminal=${i} idle ${((now - last) / 60000).toFixed(1)}min → /compact`);
+    }
+  }
+
+  // Launch N workers indépendants.
   launchAll(cwd: string, workerCount: number = 4, opts: LaunchOptions = {}): void {
     this.killAll();
     this.cwd = cwd || process.cwd();
     this.engine = opts.engine || 'claude';
-    this.noPilot = !!opts.noPilot;
     this.trustMode = !!opts.trustMode;
     this.useWSL = !!opts.useWSL;
     this.suggestMode = opts.suggestMode || 'off';
     this.logsEnabled = !!opts.logsEnabled;
+    this.autoCompactIdleMin = Math.max(0, Math.floor(opts.autoCompactIdleMin || 0));
     this.maxBuffer = this.engine === 'kiro' ? MAX_BUFFER_KIRO : MAX_BUFFER;
     if (this.logsEnabled) {
       this.logsDir = path.join(this.cwd, 'logs');
       if (!fs.existsSync(this.logsDir)) fs.mkdirSync(this.logsDir, { recursive: true });
     }
-    this.count = this.noPilot ? workerCount : 1 + workerCount;
+    this.count = workerCount;
 
-    log('launch', `engine=${this.engine} workers=${workerCount} noPilot=${this.noPilot} trust=${this.trustMode} cwd=${this.cwd}`);
+    log('launch', `engine=${this.engine} workers=${workerCount} trust=${this.trustMode} cwd=${this.cwd}`);
 
     // Rebuild slots array — un UUID v4 par slot pour les sessions claude.
     // Ces UUIDs sont la clé de la persistance : on les passe à
@@ -749,15 +799,9 @@ export class PtyManager {
       restartTimer: null,
     }));
 
-    // Update pilot prompt with correct worker count (only for claude with pilot)
-    if (this.engine === 'claude' && !this.noPilot) {
-      writePilotPrompt(workerCount);
-    }
+    this._spawnStaggered(Array.from({ length: this.count }, (_, i) => i));
 
-    for (let i = 0; i < this.count; i++) {
-      this.spawn(i, this.cwd);
-    }
-
+    this._startCompactSweep();
     this.notifyStateChange();
     // Suggesteur is spawned on demand (first AI suggestion request), not at launch
   }
@@ -768,7 +812,6 @@ export class PtyManager {
   restoreAll(state: {
     cwd: string;
     engine: string;
-    noPilot: boolean;
     trustMode: boolean;
     useWSL: boolean;
     workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
@@ -776,7 +819,6 @@ export class PtyManager {
     this.killAll();
     this.cwd = state.cwd || process.cwd();
     this.engine = state.engine || 'claude';
-    this.noPilot = !!state.noPilot;
     this.trustMode = !!state.trustMode;
     this.useWSL = !!state.useWSL;
     this.maxBuffer = this.engine === 'kiro' ? MAX_BUFFER_KIRO : MAX_BUFFER;
@@ -800,24 +842,28 @@ export class PtyManager {
       };
     });
 
-    if (this.engine === 'claude' && !this.noPilot) {
-      const workerCount = this.count - 1;
-      writePilotPrompt(Math.max(0, workerCount));
-    }
-
     log('restore', `engine=${this.engine} count=${this.count} cwd=${this.cwd}`);
 
-    for (let i = 0; i < this.count; i++) {
-      if (!this.slots[i].removed) this.spawn(i, this.cwd);
-    }
+    this._spawnStaggered(
+      this.slots.map((s, i) => (s.removed ? -1 : i)).filter(i => i >= 0)
+    );
 
     this.notifyStateChange();
   }
 
-  // Add a single new worker slot at the end and spawn its PTY. Returns the new
-   // index. Workers added this way are independent of the original launchAll
-   // configuration and persist until killAll().
+  // Compte les workers vivants (slots non-tombstone).
+  countLiveWorkers(): number {
+    return this.slots.filter(s => !s.removed).length;
+  }
+
+  // Ajoute un worker. Retourne -1 si le cap MAX_WORKERS est atteint (le serveur
+  // traduit en HTTP 400) pour éviter de spawn une N-ième instance claude qui
+  // ferait saturer la RAM.
   addWorker(): number {
+    if (this.countLiveWorkers() >= MAX_WORKERS) {
+      log('addworker-capped', `refused: ${MAX_WORKERS} live workers max`);
+      return -1;
+    }
     const newIndex = this.slots.length;
     this.slots.push({
       pty: null, ws: null, startedAt: null,
@@ -880,6 +926,7 @@ export class PtyManager {
     if (slot.pendingEnterTimer) { clearTimeout(slot.pendingEnterTimer); slot.pendingEnterTimer = null; }
     if (slot.uptimeTimer) { clearTimeout(slot.uptimeTimer); slot.uptimeTimer = null; }
     if (slot.restartTimer) { clearTimeout(slot.restartTimer); slot.restartTimer = null; }
+    if (slot.startupTimer) { clearTimeout(slot.startupTimer); slot.startupTimer = null; }
     slot.startedAt = null;
     slot.chunks = [];
     slot.chunksTotalLen = 0;
@@ -892,6 +939,12 @@ export class PtyManager {
   killAll(): void {
     const oldAutoRestart = this.autoRestart;
     this.autoRestart = false;
+    // Invalide les spawns échelonnés en vol (jeton de génération) et clear
+    // leurs timers — sinon un spawn différé ressusciterait un worker juste tué.
+    this._launchGen++;
+    for (const t of this._staggerTimers) clearTimeout(t);
+    this._staggerTimers = [];
+    this._stopCompactSweep();
     for (let i = 0; i < this.slots.length; i++) {
       this.kill(i);
     }
@@ -1140,7 +1193,7 @@ export class PtyManager {
         pid: slot.pty ? slot.pty.pid : null,
         alive: !!slot.pty,
         startedAt: slot.startedAt,
-        role: (i === 0 && !this.noPilot) ? 'pilot' as const : 'worker' as const,
+        role: 'worker' as const,
         suggestion: this.suggestions[i] || null,
         removed: !!slot.removed,
         crashed: !!slot.crashed,

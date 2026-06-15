@@ -1,4 +1,4 @@
-import { workerCount, previewUrl, engine, noPilot, trustMode, useWSL, autoFocus, autoFollow, suggestMode, theme, localSTT, setState } from './state';
+import { workerCount, previewUrl, engine, trustMode, useWSL, autoFocus, autoFollow, suggestMode, theme, localSTT, autoCompactIdleMin, setState } from './state';
 import { postJson, deleteJson, escapeHtml } from './utils';
 import { applyTheme } from './theme';
 import { showToast } from './toast';
@@ -8,7 +8,6 @@ export function openSettings(): void {
   (document.getElementById('setting-workers') as HTMLInputElement).value = String(workerCount);
   (document.getElementById('setting-preview-url') as HTMLInputElement).value = previewUrl;
   (document.getElementById('setting-engine') as HTMLSelectElement).value = engine;
-  (document.getElementById('setting-no-pilot') as HTMLInputElement).checked = noPilot;
   (document.getElementById('setting-trust-mode') as HTMLInputElement).checked = trustMode;
   (document.getElementById('setting-use-wsl') as HTMLInputElement).checked = useWSL;
   (document.getElementById('setting-auto-focus') as HTMLInputElement).checked = autoFocus;
@@ -16,6 +15,7 @@ export function openSettings(): void {
   (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = suggestMode;
   (document.getElementById('setting-theme') as HTMLSelectElement).value = theme;
   (document.getElementById('setting-local-stt') as HTMLInputElement).checked = localSTT;
+  (document.getElementById('setting-auto-compact') as HTMLInputElement).value = String(autoCompactIdleMin);
   document.getElementById('settings-overlay')!.classList.remove('hidden');
   loadProfiles();
 }
@@ -28,7 +28,6 @@ export async function saveSettings(): Promise<void> {
   const newWorkerCount = Math.max(1, Math.min(8, parseInt((document.getElementById('setting-workers') as HTMLInputElement).value, 10) || 4));
   const newPreviewUrl = (document.getElementById('setting-preview-url') as HTMLInputElement).value.trim();
   const newEngine = (document.getElementById('setting-engine') as HTMLSelectElement).value;
-  const newNoPilot = (document.getElementById('setting-no-pilot') as HTMLInputElement).checked;
   const newTrustMode = (document.getElementById('setting-trust-mode') as HTMLInputElement).checked;
   const newUseWSL = (document.getElementById('setting-use-wsl') as HTMLInputElement).checked;
   const newAutoFocus = (document.getElementById('setting-auto-focus') as HTMLInputElement).checked;
@@ -36,11 +35,11 @@ export async function saveSettings(): Promise<void> {
   const newSuggestMode = (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value;
   const newTheme = (document.getElementById('setting-theme') as HTMLSelectElement).value;
   const newLocalSTT = (document.getElementById('setting-local-stt') as HTMLInputElement).checked;
+  const newAutoCompact = Math.max(0, Math.min(240, parseInt((document.getElementById('setting-auto-compact') as HTMLInputElement).value, 10) || 0));
 
   setState('workerCount', newWorkerCount);
   setState('previewUrl', newPreviewUrl);
   setState('engine', newEngine);
-  setState('noPilot', newNoPilot);
   setState('trustMode', newTrustMode);
   setState('useWSL', newUseWSL);
   setState('autoFocus', newAutoFocus);
@@ -48,13 +47,15 @@ export async function saveSettings(): Promise<void> {
   setState('suggestMode', newSuggestMode);
   setState('theme', newTheme);
   setState('localSTT', newLocalSTT);
+  setState('autoCompactIdleMin', newAutoCompact);
 
   applyTheme();
   await postJson('/api/settings', {
     workers: newWorkerCount, previewUrl: newPreviewUrl, engine: newEngine,
-    noPilot: newNoPilot, trustMode: newTrustMode, useWSL: newUseWSL,
+    trustMode: newTrustMode, useWSL: newUseWSL,
     autoFocus: newAutoFocus, autoFollow: newAutoFollow,
     suggestMode: newSuggestMode, theme: newTheme, localSTT: newLocalSTT,
+    autoCompactIdleMin: newAutoCompact,
   });
 
   closeSettings();
@@ -90,7 +91,6 @@ export async function saveProfile(): Promise<void> {
     workers: Math.max(1, Math.min(8, parseInt((document.getElementById('setting-workers') as HTMLInputElement).value, 10) || 4)),
     previewUrl: (document.getElementById('setting-preview-url') as HTMLInputElement).value.trim(),
     engine: (document.getElementById('setting-engine') as HTMLSelectElement).value,
-    noPilot: (document.getElementById('setting-no-pilot') as HTMLInputElement).checked,
     trustMode: (document.getElementById('setting-trust-mode') as HTMLInputElement).checked,
     useWSL: (document.getElementById('setting-use-wsl') as HTMLInputElement).checked,
     autoFocus: (document.getElementById('setting-auto-focus') as HTMLInputElement).checked,
@@ -98,6 +98,7 @@ export async function saveProfile(): Promise<void> {
     suggestMode: (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value,
     theme: (document.getElementById('setting-theme') as HTMLSelectElement).value,
     localSTT: (document.getElementById('setting-local-stt') as HTMLInputElement).checked,
+    autoCompactIdleMin: Math.max(0, Math.min(240, parseInt((document.getElementById('setting-auto-compact') as HTMLInputElement).value, 10) || 0)),
   };
   await postJson('/api/profiles', { name, settings: s });
   input.value = '';
@@ -112,7 +113,6 @@ export async function loadProfile(name: string): Promise<void> {
   if (s.workers != null) { setState('workerCount', s.workers as number); (document.getElementById('setting-workers') as HTMLInputElement).value = String(s.workers); }
   if (s.previewUrl != null) { setState('previewUrl', s.previewUrl as string); (document.getElementById('setting-preview-url') as HTMLInputElement).value = s.previewUrl as string; }
   if (s.engine != null) { setState('engine', s.engine as string); (document.getElementById('setting-engine') as HTMLSelectElement).value = s.engine as string; }
-  if (s.noPilot != null) { setState('noPilot', s.noPilot as boolean); (document.getElementById('setting-no-pilot') as HTMLInputElement).checked = s.noPilot as boolean; }
   if (s.trustMode != null) { setState('trustMode', s.trustMode as boolean); (document.getElementById('setting-trust-mode') as HTMLInputElement).checked = s.trustMode as boolean; }
   if (s.useWSL != null) { setState('useWSL', s.useWSL as boolean); (document.getElementById('setting-use-wsl') as HTMLInputElement).checked = s.useWSL as boolean; }
   if (s.autoFocus != null) { setState('autoFocus', s.autoFocus as boolean); (document.getElementById('setting-auto-focus') as HTMLInputElement).checked = s.autoFocus as boolean; }
@@ -120,6 +120,7 @@ export async function loadProfile(name: string): Promise<void> {
   if (s.suggestMode != null) { setState('suggestMode', s.suggestMode as string); (document.getElementById('setting-suggest-mode') as HTMLSelectElement).value = s.suggestMode as string; }
   if (s.theme != null) { setState('theme', s.theme as string); (document.getElementById('setting-theme') as HTMLSelectElement).value = s.theme as string; applyTheme(); }
   if (s.localSTT != null) { setState('localSTT', s.localSTT as boolean); (document.getElementById('setting-local-stt') as HTMLInputElement).checked = s.localSTT as boolean; }
+  if (s.autoCompactIdleMin != null) { setState('autoCompactIdleMin', s.autoCompactIdleMin as number); (document.getElementById('setting-auto-compact') as HTMLInputElement).value = String(s.autoCompactIdleMin); }
   // Persist to server so settings survive reload
   await postJson('/api/settings', s);
   showToast(`Profile "${name}" loaded`);

@@ -108,7 +108,7 @@ export function spawnWorkerInActiveSpace(targetSpace?: string): void {
     if (tree) renderAndWire(tree);
   }
   postJson('/api/terminal/spawn')
-    .then(r => r.json() as Promise<{ ok: boolean; index: number; error?: string }>)
+    .then(r => r.json() as Promise<{ ok: boolean; index: number; liveWorkers?: number; error?: string }>)
     .then((data) => {
       const idx = data.index;
       const tree = getLayout();
@@ -122,6 +122,13 @@ export function spawnWorkerInActiveSpace(targetSpace?: string): void {
       requestAnimationFrame(() => fitAll());
       postJson('/api/layout', { layout: getLayout() });
       finishRender();
+      // Warning RAM : chaque worker = une instance Claude Code complète
+      // (~150-400 MB). Au-delà de 6 workers vivants, on prévient l'utilisateur
+      // que la conso mémoire grimpe vite (≈ liveWorkers × 250 MB).
+      if (typeof data.liveWorkers === 'number' && data.liveWorkers >= 6) {
+        const estGb = (data.liveWorkers * 0.25).toFixed(1);
+        showToast(`⚠️ ${data.liveWorkers} workers actifs (~${estGb} GB RAM estimés). Pense à en fermer ou à activer l'auto-compact.`, 5000);
+      }
     })
     .catch(() => { showToast('Failed to spawn worker'); });
 }

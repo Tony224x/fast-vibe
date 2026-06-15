@@ -4,7 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import path from 'path';
 import fs from 'fs';
 import { exec, spawn, execSync, ChildProcess } from 'child_process';
-import { PtyManager } from './pty-manager';
+import { PtyManager, MAX_WORKERS } from './pty-manager';
 import { Settings, Bookmark, Profile, DEFAULTS } from './types';
 import { improver } from './prompt-improver';
 
@@ -41,7 +41,6 @@ const SESSION_STATE_FILE = path.join(__dirname, '..', '.session-state.json');
 interface SessionState {
   cwd: string;
   engine: string;
-  noPilot: boolean;
   trustMode: boolean;
   useWSL: boolean;
   workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
@@ -68,7 +67,6 @@ function schedulePersistSessionState(): void {
     const state: SessionState = {
       cwd: ptyManager.cwd,
       engine: ptyManager.engine,
-      noPilot: ptyManager.noPilot,
       trustMode: ptyManager.trustMode,
       useWSL: ptyManager.useWSL,
       workers: ptyManager.slots.map((s, i) => ({
@@ -132,9 +130,6 @@ app.post('/api/settings', (req: Request, res: Response) => {
   if (req.body.engine != null && ['claude', 'kiro'].includes(req.body.engine)) {
     settings.engine = req.body.engine;
   }
-  if (req.body.noPilot != null) {
-    settings.noPilot = !!req.body.noPilot;
-  }
   if (req.body.trustMode != null) {
     settings.trustMode = !!req.body.trustMode;
   }
@@ -156,6 +151,13 @@ app.post('/api/settings', (req: Request, res: Response) => {
   if (req.body.logsEnabled != null) {
     settings.logsEnabled = !!req.body.logsEnabled;
   }
+  // Auto-compact idle (minutes, 0 = off). Clampé 0..240. Appliqué à chaud
+  // sur le ptyManager pour que le changement prenne effet sans relancer.
+  if (req.body.autoCompactIdleMin != null) {
+    const m = parseInt(req.body.autoCompactIdleMin, 10);
+    settings.autoCompactIdleMin = Math.max(0, Math.min(240, isNaN(m) ? 0 : m));
+    ptyManager.setAutoCompactIdleMin(settings.autoCompactIdleMin);
+  }
   // localSTT : flip détection. Si on l'active, spawn le sidecar Python.
   // Si on le désactive, kill. On compare avant d'écraser pour ne pas
   // re-spawn inutile sur un POST qui passe la même valeur.
@@ -174,13 +176,12 @@ app.post('/api/settings', (req: Request, res: Response) => {
 // ── Status API ──
 
 app.get('/api/status', (_req: Request, res: Response) => {
-  // session: null si aucune session active. Sinon, expose cwd/engine/noPilot
+  // session: null si aucune session active. Sinon, expose cwd/engine
   // pour que le frontend rebuild le grid lors d'un auto-reconnect (browser
   // fermé/rouvert, ou redémarrage serveur avec restoreAll).
   const session = ptyManager.slots.length > 0 ? {
     cwd: ptyManager.cwd,
     engine: ptyManager.engine,
-    noPilot: ptyManager.noPilot,
     trustMode: ptyManager.trustMode,
   } : null;
   res.json({ terminals: ptyManager.getStatus(), session });
@@ -294,12 +295,14 @@ app.post('/api/launch', (req: Request, res: Response) => {
   if (!fs.existsSync(cwd)) {
     return res.status(400).json({ error: `Directory does not exist: ${cwd}` });
   }
-  const workers = req.body.workers || settings.workers;
+  // Clamp au cap : le launch crée les slots directement sans passer par
+  // addWorker, donc on borne ici aussi pour ne pas spawn > MAX_WORKERS claude.
+  const workers = Math.max(1, Math.min(MAX_WORKERS, parseInt(req.body.workers, 10) || settings.workers));
   settings.workers = workers;
   settings.lastCwd = cwd;
   saveSettings();
-  ptyManager.launchAll(cwd, workers, { engine: settings.engine, noPilot: settings.noPilot, trustMode: settings.trustMode, useWSL: settings.useWSL, suggestMode: settings.suggestMode, logsEnabled: settings.logsEnabled });
-  res.json({ ok: true, cwd, workers, engine: settings.engine, noPilot: settings.noPilot });
+  ptyManager.launchAll(cwd, workers, { engine: settings.engine, trustMode: settings.trustMode, useWSL: settings.useWSL, suggestMode: settings.suggestMode, logsEnabled: settings.logsEnabled, autoCompactIdleMin: settings.autoCompactIdleMin });
+  res.json({ ok: true, cwd, workers, engine: settings.engine });
 });
 
 app.post('/api/stop', async (_req: Request, res: Response) => {
@@ -335,7 +338,6 @@ app.get('/api/restore-info', (_req: Request, res: Response) => {
     available: true,
     cwd: state.cwd,
     engine: state.engine,
-    noPilot: state.noPilot,
     workers: aliveWorkers,
     totalWorkers: state.workers.length,
     ageMs,
@@ -353,6 +355,9 @@ app.post('/api/restore', (_req: Request, res: Response) => {
   }
   try {
     ptyManager.restoreAll(state);
+    // restoreAll() ne connaît pas le réglage auto-compact (pas dans le state) :
+    // on l'applique depuis les settings après coup pour (re)démarrer le sweep.
+    ptyManager.setAutoCompactIdleMin(settings.autoCompactIdleMin);
     res.json({ ok: true, cwd: state.cwd, workers: ptyManager.slots.length });
   } catch (e: unknown) {
     res.status(500).json({ error: `restore failed: ${(e as Error).message}` });
@@ -369,16 +374,16 @@ app.post('/api/terminal/spawn', (_req: Request, res: Response) => {
     return res.status(400).json({ error: 'No active session — call /api/launch first' });
   }
   const index = ptyManager.addWorker();
-  res.json({ ok: true, index });
+  if (index === -1) {
+    return res.status(400).json({ error: `Worker cap reached (${MAX_WORKERS} max). Remove a worker before adding another.` });
+  }
+  res.json({ ok: true, index, liveWorkers: ptyManager.countLiveWorkers() });
 });
 
 app.delete('/api/terminal/:id', (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   if (isNaN(id) || id < 0 || id >= ptyManager.slots.length) {
     return res.status(404).json({ error: 'Terminal not found' });
-  }
-  if (id === 0 && !ptyManager.noPilot) {
-    return res.status(400).json({ error: 'Pilot cannot be removed' });
   }
   ptyManager.removeWorker(id);
   res.json({ ok: true });
@@ -482,7 +487,7 @@ app.post('/api/batch/clear', (_req: Request, res: Response) => {
 //
 // Délègue à PromptImprover qui maintient une session `claude` persistante via
 // --resume. La 1ère requête prime la session (~5-10s), les suivantes hit le
-// cache prompt (~2-3s). Aucune interaction avec les workers / pilot.
+// cache prompt (~2-3s). Aucune interaction avec les workers.
 
 const improveLimiter = new Map<string, { count: number; resetAt: number }>();
 const improveLimiterCleanupTimer = setInterval(() => {
@@ -823,6 +828,15 @@ wss.on('error', (err: Error) => {
 });
 
 server.on('error', (err: Error) => {
+  // EADDRINUSE : un ancien fast-vibe (ou un orphelin) tient déjà le port. Sans
+  // traitement, listen() ne réussit jamais : le process ne sert ni n'exit, le
+  // superviseur (dist/app.js) ne voit pas d'exit → ne relance pas → fenêtre
+  // jamais ouverte ("l'app ne démarre pas"). On exit(1) pour que le superviseur
+  // relance avec backoff au lieu d'un hang silencieux.
+  if ((err as NodeJS.ErrnoException).code === 'EADDRINUSE') {
+    logServer('http-error', `port ${PORT} déjà utilisé — un fast-vibe tourne déjà ou un orphelin tient le port. Arrêt pour laisser le superviseur relancer.`);
+    process.exit(1);
+  }
   logServer('http-error', err.message);
 });
 

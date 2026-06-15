@@ -5,7 +5,6 @@ export interface Settings {
   workers: number;
   previewUrl: string;
   engine: 'claude' | 'kiro';
-  noPilot: boolean;
   trustMode: boolean;
   useWSL: boolean;
   autoFocus: boolean;
@@ -17,6 +16,10 @@ export interface Settings {
   // scripts/whisper_sidecar.py au boot et le kill au shutdown. Si false,
   // l'user doit le lancer lui-même (ou il n'y a pas de transcription).
   localSTT: boolean;
+  // Compactage auto des workers claude restés silencieux (aucun output) plus
+  // de N minutes alors qu'ils sont au prompt. 0 = désactivé (default). Réduit
+  // la RAM des workers idle dont le contexte ne fait que grossir.
+  autoCompactIdleMin: number;
   lastCwd?: string;
 }
 
@@ -32,6 +35,13 @@ export interface Slot {
   // Timestamp ms du dernier spawn — utilisé par _scheduleRestart pour
   // détecter un exit "fast-fail" (<10s = --resume cassé probable).
   startedAtMs?: number | null;
+  // Timestamp ms du dernier output PTY (onData) — sert à mesurer l'inactivité
+  // pour l'auto-compactage. Mis à jour à chaque chunk reçu du worker.
+  lastActivityMs?: number;
+  // True après un /compact auto pendant une période d'idle. Reset à la
+  // prochaine entrée utilisateur réelle (nouveau travail), pas par l'output
+  // du compact lui-même — évite de re-compacter en boucle un worker silencieux.
+  compactedWhileIdle?: boolean;
   chunks: string[];
   chunksTotalLen: number;
   joinedCache: string;
@@ -64,6 +74,10 @@ export interface Slot {
   // Stocké pour pouvoir être cleared dans kill()/killAll() — sinon un slot
   // tué pendant son délai de restart resuscite tout seul 500ms-12s après.
   restartTimer?: ReturnType<typeof setTimeout> | null;
+  // Watchdog de démarrage : si après N secondes le PTY est vivant mais n'a
+  // émis AUCUN octet (chunksTotalLen===0), on prévient l'utilisateur que le
+  // worker est bloqué (binaire introuvable/qui hang) au lieu d'un pane muet.
+  startupTimer?: ReturnType<typeof setTimeout> | null;
 }
 
 export interface Suggestion {
@@ -86,7 +100,7 @@ export interface TerminalStatus {
   pid: number | null;
   alive: boolean;
   startedAt: string | null;
-  role: 'pilot' | 'worker';
+  role: 'worker';
   suggestion: Suggestion | null;
   // True quand le slot a épuisé son budget de restarts. Le frontend
   // affiche un état "crashed" et un bouton restart manuel.
@@ -95,11 +109,11 @@ export interface TerminalStatus {
 
 export interface LaunchOptions {
   engine?: 'claude' | 'kiro';
-  noPilot?: boolean;
   trustMode?: boolean;
   useWSL?: boolean;
   suggestMode?: 'off' | 'static' | 'ai';
   logsEnabled?: boolean;
+  autoCompactIdleMin?: number;
 }
 
 export interface Profile {
@@ -111,7 +125,6 @@ export const DEFAULTS: Settings = {
   workers: 4,
   previewUrl: '',
   engine: 'claude',
-  noPilot: true,
   trustMode: false,
   useWSL: false,
   autoFocus: true,
@@ -120,4 +133,5 @@ export const DEFAULTS: Settings = {
   suggestMode: 'off',
   logsEnabled: false,
   localSTT: false,
+  autoCompactIdleMin: 0,
 };

@@ -4,40 +4,7 @@ jest.mock('fs', () => {
   return { ...actual, writeFile: jest.fn((_p: any, _data: any, cb: any) => cb && cb()) };
 });
 
-import * as fs from 'fs';
-import { PtyManager, writePilotPrompt, ANSI_RE, MAX_BUFFER, PILOT_PROMPT_FILE } from '../src/pty-manager';
-
-const mockWriteFile = fs.writeFile as unknown as jest.Mock;
-
-describe('writePilotPrompt', () => {
-  beforeEach(() => {
-    mockWriteFile.mockClear();
-  });
-
-  test('generates prompt with correct worker count', () => {
-    writePilotPrompt(3);
-    const content = mockWriteFile.mock.calls[0][1] as string;
-    expect(content).toContain('3 EXTERNAL worker');
-    expect(content).toContain('workers 1-3');
-    expect(content).toContain('1, 2, 3');
-  });
-
-  test('includes CSRF header in curl commands', () => {
-    writePilotPrompt(2);
-    const content = mockWriteFile.mock.calls[0][1] as string;
-    expect(content).toContain('X-Requested-With: FastVibe');
-  });
-
-  test('includes all API endpoints', () => {
-    writePilotPrompt(2);
-    const content = mockWriteFile.mock.calls[0][1] as string;
-    expect(content).toContain('/api/terminal/N/send');
-    expect(content).toContain('/api/terminal/N/output');
-    expect(content).toContain('/api/terminal/N/compact');
-    expect(content).toContain('/api/terminal/N/clear');
-    expect(content).toContain('/api/status');
-  });
-});
+import { PtyManager, ANSI_RE, MAX_BUFFER, MAX_WORKERS } from '../src/pty-manager';
 
 describe('PtyManager', () => {
   let mgr: PtyManager;
@@ -55,27 +22,19 @@ describe('PtyManager', () => {
       expect(mgr.count).toBe(0);
       expect(mgr.slots).toEqual([]);
       expect(mgr.engine).toBe('claude');
-      expect(mgr.noPilot).toBe(false);
     });
   });
 
   describe('launchAll', () => {
-    test('creates 1 pilot + N worker slots', () => {
-      mgr.launchAll('/tmp', 4, { engine: 'claude', noPilot: false });
-      expect(mgr.count).toBe(5);
-      expect(mgr.slots.length).toBe(5);
-    });
-
-    test('with noPilot creates only N slots', () => {
-      mgr.launchAll('/tmp', 3, { engine: 'claude', noPilot: true });
-      expect(mgr.count).toBe(3);
-      expect(mgr.slots.length).toBe(3);
+    test('creates N worker slots', () => {
+      mgr.launchAll('/tmp', 4, { engine: 'claude' });
+      expect(mgr.count).toBe(4);
+      expect(mgr.slots.length).toBe(4);
     });
 
     test('sets engine and options', () => {
-      mgr.launchAll('/tmp', 2, { engine: 'kiro', noPilot: true, trustMode: true, useWSL: false });
+      mgr.launchAll('/tmp', 2, { engine: 'kiro', trustMode: true, useWSL: false });
       expect(mgr.engine).toBe('kiro');
-      expect(mgr.noPilot).toBe(true);
       expect(mgr.trustMode).toBe(true);
       expect(mgr.useWSL).toBe(false);
     });
@@ -83,22 +42,74 @@ describe('PtyManager', () => {
     test('kills previous terminals before launching', () => {
       mgr.launchAll('/tmp', 2, {});
       mgr.launchAll('/tmp', 3, {});
-      expect(mgr.slots.length).toBe(4); // 1 pilot + 3 workers
+      expect(mgr.slots.length).toBe(3);
+    });
+
+    test('claude: spawn réussi flippe slot.resume → true (prochain = --resume)', () => {
+      // index 0 spawn synchrone (1er du stagger) + node-pty mocké → succès →
+      // resume passe à true APRÈS le spawn (cf. fix anti-poison dans spawn()).
+      mgr.launchAll('/tmp', 1, { engine: 'claude' });
+      expect((mgr.slots[0] as any).sessionId).toBeTruthy();
+      expect((mgr.slots[0] as any).resume).toBe(true);
+    });
+  });
+
+  describe('_buildLaunch — spawn direct claude', () => {
+    function build(opts: { trustMode?: boolean; useWSL?: boolean; sessionId?: string | null; resume?: boolean }) {
+      const m = new PtyManager();
+      m.engine = 'claude';
+      m.trustMode = !!opts.trustMode;
+      m.useWSL = !!opts.useWSL;
+      const slot: any = { sessionId: opts.sessionId ?? null, resume: !!opts.resume };
+      const launch = (m as any)._buildLaunch('/work', slot);
+      return { launch, slot };
+    }
+
+    test('mode direct, aucune injection shell', () => {
+      const { launch } = build({ trustMode: true, sessionId: 'uuid-1', resume: false });
+      expect(launch.mode).toBe('direct');
+      expect(launch.injectCmd).toBeNull();
+    });
+
+    test('1er lancement: --session-id <uuid> + trust flag', () => {
+      const { launch, slot } = build({ trustMode: true, sessionId: 'uuid-1', resume: false });
+      expect(launch.args).toContain('--dangerously-skip-permissions');
+      expect(launch.args).toContain('--session-id');
+      expect(launch.args).toContain('uuid-1');
+      expect(launch.args).not.toContain('--resume');
+      // _buildLaunch est en lecture seule : il ne flippe PAS resume. Le passage
+      // à true se fait dans spawn() après un pty.spawn réussi (anti-poison : un
+      // spawn qui throw ne doit pas forcer un --resume d'une session inexistante).
+      expect(slot.resume).toBe(false);
+    });
+
+    test('reboot: --resume <uuid> (pas --session-id)', () => {
+      const { launch } = build({ trustMode: true, sessionId: 'uuid-2', resume: true });
+      expect(launch.args).toContain('--resume');
+      expect(launch.args).toContain('uuid-2');
+      expect(launch.args).not.toContain('--session-id');
+    });
+
+    test('sans trustMode: pas de --dangerously-skip-permissions', () => {
+      const { launch } = build({ trustMode: false, sessionId: 'uuid-3', resume: false });
+      expect(launch.args).not.toContain('--dangerously-skip-permissions');
+    });
+
+    test('WSL (win32 only): passe par wsl.exe -- claude', () => {
+      if (process.platform !== 'win32') return; // branche WSL gardée par isWin
+      const { launch } = build({ trustMode: true, useWSL: true, sessionId: 'uuid-4', resume: false });
+      expect(launch.shell).toBe('wsl.exe');
+      expect(launch.args.slice(0, 4)).toEqual(['--cd', '/work', '--', 'claude']);
+      expect(launch.args).toContain('--session-id');
+      expect(launch.args).toContain('uuid-4');
     });
   });
 
   describe('getStatus', () => {
-    test('returns correct roles with pilot', () => {
-      mgr.launchAll('/tmp', 2, { engine: 'claude', noPilot: false });
+    test('returns all workers', () => {
+      mgr.launchAll('/tmp', 2, { engine: 'claude' });
       const status = mgr.getStatus();
-      expect(status[0].role).toBe('pilot');
-      expect(status[1].role).toBe('worker');
-      expect(status[2].role).toBe('worker');
-    });
-
-    test('returns all workers in noPilot mode', () => {
-      mgr.launchAll('/tmp', 2, { engine: 'claude', noPilot: true });
-      const status = mgr.getStatus();
+      expect(status.length).toBe(2);
       expect(status.every((s: any) => s.role === 'worker')).toBe(true);
     });
 

@@ -1,6 +1,6 @@
 import {
   setState, terminals, focusedIndex, unreadTerminals, autoFocus, autoFollow,
-  noPilot, workerCount, launched, launchTimestamp, suggestMode,
+  launched, launchTimestamp, suggestMode,
   lastUserInputAt, expandedIndex, textDecoder, TerminalEntry,
 } from './state';
 import { getXtermTheme } from './theme';
@@ -182,7 +182,7 @@ export function detectTaskDone(index: number, data: string): void {
     if (!lastLine) return;
     for (const pat of DONE_PATTERNS) {
       if (pat.test(lastLine)) {
-        const label = (index === 0 && !noPilot) ? 'Pilot' : (noPilot ? `Worker ${index + 1}` : `Worker ${index}`);
+        const label = `Worker ${index + 1}`;
         notifyTaskDone(label);
         if (Date.now() - lastUserInputAt > 3000) setFocused(index);
         const pane = document.querySelector(`.terminal-pane[data-index="${index}"]`) as HTMLElement | null;
@@ -256,11 +256,17 @@ export function connectWebSocket(index: number, term: InstanceType<typeof Termin
 
 // ── Create Terminal ──
 
+// Scrollback par terminal. xterm.js garde chaque ligne d'historique en mémoire
+// (buffer de cellules) ; multiplié par N panes c'est un poste RAM navigateur réel.
+// 2000 lignes suffisent largement à l'usage (scroll-back debug) tout en divisant
+// par ~2.5 la conso par rapport à l'ancien 5000.
+const SCROLLBACK = 2000;
+
 export function createTerminal(index: number): void {
   const term = new Terminal({
     cursorBlink: true, fontSize: 13,
     fontFamily: "'Cascadia Code', 'Fira Code', Consolas, monospace",
-    theme: getXtermTheme(), allowProposedApi: true, scrollback: 5000,
+    theme: getXtermTheme(), allowProposedApi: true, scrollback: SCROLLBACK,
   });
 
   const fitAddon = new FitAddon.FitAddon();
