@@ -35,6 +35,12 @@ npm start      # Start server at http://localhost:3333
 npm run dev    # Dev mode with auto-reload
 ```
 
+## Git workflow & CI
+
+- **Work on `dev`, never commit directly to `master`.** `master` is the release branch.
+- **Every change reaches `master` via a PR `dev` → `master`.** CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) runs `typecheck → build → test:ci` and **must be green before merge** (enable branch protection on `master` requiring the `CI` check in GitHub repo settings).
+- **Before pushing, run the local mirror** (push-green-first): `powershell -File scripts/ci-local.ps1`. It replays the CI steps locally so you don't burn Actions minutes on red runs. The `.yml` is the source of truth; `ci-local.ps1` mirrors it.
+
 ## API
 
 | Endpoint | Description |
