@@ -41,5 +41,11 @@ jobs:
       - name: Build (tsc + esbuild)
         run: npm run build
 
+      # test:ci = `jest --ci --coverage --runInBand`. --runInBand (single
+      # process, pas de worker pool) est délibéré : sur un runner Windows lent,
+      # le pool de workers + coverage + forceExit pouvait se court-circuiter au
+      # teardown (un worker pas encore drainé → parent exit 1 SANS échec de
+      # test, run rouge fantôme). En in-band il n'y a plus de worker à tuer →
+      # gate déterministe. Coût négligeable (suite ~12s, 157 tests).
       - name: Test (jest, 157 tests, node-pty mocké)
         run: npm run test:ci
