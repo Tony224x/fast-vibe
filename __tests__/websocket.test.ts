@@ -10,7 +10,7 @@ let port: number;
 beforeAll((done) => {
   httpServer = server.listen(0, '127.0.0.1', () => {
     port = (httpServer.address() as import('net').AddressInfo).port;
-    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude', noPilot: false });
+    ptyManager.launchAll(process.cwd(), 2, { engine: 'claude' });
     done();
   });
 });

@@ -1,12 +1,12 @@
 node_modules/
 .env
 *.log
-.pilot-prompt.md
 .settings.json
 .bookmarks.json
 .profiles.json
 .layout.json
 .session-state.json
+*.bak
 .claude/scheduled_tasks.lock
 tmpr*.json
 claude-add-*.txt

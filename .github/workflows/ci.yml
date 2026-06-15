@@ -1,0 +1,45 @@
+name: CI
+
+# Gate avant tout merge dans master : tout PR ciblant master DOIT passer ce job.
+# Tourne aussi sur push direct vers master/dev comme filet de sécurité.
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master, dev]
+
+# Un nouveau push sur la même ref annule le run précédent (économie de minutes).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-test:
+    name: typecheck · build · test
+    # windows-latest : fast-vibe est Windows-only (ConPTY). node-pty s'installe
+    # via les build tools déjà présents sur le runner Windows (comme en local,
+    # Node 24), et le test WSL gardé par win32 exécute réellement ses assertions
+    # ici (skip sur Linux). C'est la plateforme honnête pour ce produit.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24' # miroir du Node local (24.11.1)
+          cache: npm
+
+      # npm ci = install reproductible depuis package-lock.json (présent, tracké).
+      # Construit node-pty (seule dépendance native) → attrape une régression
+      # d'install. Les tests le mockent, mais on garde le build natif en CI.
+      - name: Install
+        run: npm ci
+
+      - name: Typecheck (server + client)
+        run: npm run typecheck
+
+      - name: Build (tsc + esbuild)
+        run: npm run build
+
+      - name: Test (jest, 157 tests, node-pty mocké)
+        run: npm run test:ci

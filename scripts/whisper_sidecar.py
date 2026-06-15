@@ -42,6 +42,8 @@ print(f"[whisper-sidecar] starting model={MODEL_SIZE} device={DEVICE} compute={C
 try:
     from faster_whisper import WhisperModel
     from flask import Flask, request, jsonify
+    from huggingface_hub import try_to_load_from_cache
+    from huggingface_hub.constants import HF_HUB_CACHE
 except ImportError as e:
     sys.stderr.write(
         f"[whisper-sidecar] missing dependency: {e}\n"
@@ -49,8 +51,34 @@ except ImportError as e:
     )
     sys.exit(1)
 
-print(f"[whisper-sidecar] loading whisper model (first run downloads ~1.5GB)...", flush=True)
-model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
+# Détection cache HF avant instanciation. Sans ça, faster-whisper appelle
+# huggingface_hub qui fait toujours un HEAD réseau pour valider l'etag,
+# ce qui rallonge le boot de plusieurs secondes même quand tout est cached.
+# Avec local_files_only=True on saute totalement la couche réseau si on
+# détecte que model.bin est sur disque.
+#
+# Pourquoi le message "downloads 1.5GB" induit en erreur : il s'affichait
+# à chaque boot, même quand le modèle était déjà cached → l'utilisateur
+# croyait que ça re-téléchargeait 1GB à chaque lancement, alors qu'en
+# réalité c'était juste le HEAD réseau + le chargement disque (461 MB
+# pour le 'small') qui prenait son temps.
+_repo_id = f"Systran/faster-whisper-{MODEL_SIZE}"
+_cached_model_bin = try_to_load_from_cache(repo_id=_repo_id, filename="model.bin")
+_size_hint = {
+    "tiny": "~75 MB", "base": "~145 MB", "small": "~465 MB",
+    "medium": "~1.5 GB", "large-v3": "~3 GB", "large": "~3 GB",
+}.get(MODEL_SIZE, "unknown")
+
+if _cached_model_bin and isinstance(_cached_model_bin, str):
+    print(f"[whisper-sidecar] cache hit: {_cached_model_bin}", flush=True)
+    print(f"[whisper-sidecar] loading model from disk (~5-15s, no network)...", flush=True)
+    _kwargs = {"local_files_only": True}
+else:
+    print(f"[whisper-sidecar] cache miss for {_repo_id} (HF cache: {HF_HUB_CACHE})", flush=True)
+    print(f"[whisper-sidecar] downloading model {MODEL_SIZE} ({_size_hint}) — one-time, then cached...", flush=True)
+    _kwargs = {}
+
+model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE, **_kwargs)
 print(f"[whisper-sidecar] model loaded, listening on 127.0.0.1:{PORT}", flush=True)
 
 app = Flask(__name__)

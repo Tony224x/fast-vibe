@@ -1,38 +1,10 @@
-import { terminals, noPilot, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState, sessionTimerInterval, launchTimestamp } from './state';
+import { terminals, workerCount, engine, trustMode, previewUrl, launched, unreadTerminals, setState, sessionTimerInterval, launchTimestamp } from './state';
 import { postJson, debounce } from './utils';
 import { createTerminal, setFocused, scheduleFitAll, fitAll, termActivity, receivingTimers, resetWsReconnectAttempts } from './terminal';
 import { togglePreview, loadPreview, toggleZen } from './preview';
 import { initSplitters } from './ui-helpers';
 import { renderWelcomeProjects } from './bookmarks';
-import { ICONS } from './icons';
 import { buildDefaultLayout, renderLayout, setLayout, getLayout, initLayoutDnd, collectPanes, captureSizes, LayoutNode } from './layout';
-
-function paneHeader(label: string, index: number, isPilot: boolean): string {
-  const deleteBtn = isPilot ? '' : `<button class="btn-pane-action btn-ctx-danger" data-action="delete" data-index="${index}" data-tooltip="Delete worker" title="Delete">${ICONS.trash}</button>`;
-  return `
-    <div class="terminal-pane ${isPilot ? 'pilot' : 'worker'}" data-index="${index}"${isPilot ? '' : ' style="flex:1"'}>
-      <div class="pane-header">
-        <span class="pane-title">${label}<span class="unread-dot"></span></span>
-        <span class="pane-status">
-          <span class="status-dot"></span>
-          <span class="status-text">--</span>
-        </span>
-        <span class="pane-actions">
-          <span class="pane-actions-overflow">
-            <button class="btn-pane-action btn-verify" data-action="verify" data-index="${index}" data-tooltip="Verify (code review)" title="Verify">${ICONS.check}<span>Verify</span></button>
-            <button class="btn-pane-action" data-action="copy" data-index="${index}" data-tooltip="Copy output" title="Copy">${ICONS.copy}</button>
-            <button class="btn-pane-action" data-action="compact" data-index="${index}" data-tooltip="Compact context" title="Compact">${ICONS.layers}</button>
-            <button class="btn-pane-action" data-action="clear" data-index="${index}" data-tooltip="Clear context" title="Clear">${ICONS.eraser}</button>
-            <button class="btn-pane-action" data-action="restart" data-index="${index}" data-tooltip="Restart" title="Restart">${ICONS.refresh}</button>
-          </span>
-          <button class="btn-pane-action btn-overflow-toggle" data-action="overflow-toggle" data-index="${index}" data-tooltip="More actions" title="More">${ICONS.moreHorizontal}</button>
-          ${deleteBtn}
-        </span>
-        <button class="btn-expand" data-index="${index}" data-tooltip="Expand / Collapse" title="Expand">${ICONS.expand}</button>
-      </div>
-      <div class="pane-body" id="term-${index}"></div>
-    </div>`;
-}
 
 export async function launchSession(): Promise<void> {
   const cwdInput = document.getElementById('cwd-input') as HTMLInputElement;
@@ -54,26 +26,11 @@ export async function launchSession(): Promise<void> {
   // Build worker panes dynamically (loads persisted layout if compatible)
   await buildWorkerPanes(workerCount);
 
-  // Hide/show pilot pane based on noPilot mode
-  const pilotPane = document.querySelector('.terminal-pane.pilot');
-  const resizeHandle = document.getElementById('resize-handle');
-  if (noPilot) {
-    if (pilotPane) pilotPane.remove();
-    if (resizeHandle) resizeHandle.classList.add('hidden');
-  } else {
-    if (resizeHandle) resizeHandle.classList.remove('hidden');
-    // Re-add pilot pane if it was removed in a previous noPilot session
-    const grid = document.getElementById('workers-grid')!;
-    if (!document.querySelector('.terminal-pane.pilot')) {
-      grid.insertAdjacentHTML('beforebegin', paneHeader('Pilot', 0, true));
-    }
-  }
-
   document.getElementById('welcome')!.classList.add('hidden');
   document.getElementById('terminals')!.classList.remove('hidden');
   document.getElementById('btn-start')!.classList.add('hidden');
   document.getElementById('btn-stop')!.classList.remove('hidden');
-  document.getElementById('session-info')!.textContent = `${cwd} (${engine}${noPilot ? ', no pilot' : ''}${trustMode ? ', trust' : ', safe'})`;
+  document.getElementById('session-info')!.textContent = `${cwd} (${engine}${trustMode ? ', trust' : ', safe'})`;
 
   // Show broadcast bar in sidebar
   document.getElementById('broadcast-bar')!.classList.remove('hidden');
@@ -83,7 +40,7 @@ export async function launchSession(): Promise<void> {
 
   // Session timer
   const infoEl = document.getElementById('session-info')!;
-  const infoBase = `${cwd} (${engine}${noPilot ? ', no pilot' : ''}${trustMode ? ', trust' : ', safe'})`;
+  const infoBase = `${cwd} (${engine}${trustMode ? ', trust' : ', safe'})`;
   if (sessionTimerInterval) clearInterval(sessionTimerInterval);
   setState('sessionTimerInterval', setInterval(() => {
     const sec = Math.floor((Date.now() - launchTimestamp) / 1000);
@@ -92,13 +49,11 @@ export async function launchSession(): Promise<void> {
     infoEl.textContent = `${infoBase} · ${m}m ${s}s`;
   }, 1000));
 
-  const totalTerminals = noPilot ? workerCount : 1 + workerCount;
-
-  for (let i = 0; i < totalTerminals; i++) {
+  for (let i = 0; i < workerCount; i++) {
     createTerminal(i);
   }
 
-  setFocused(noPilot ? 0 : 0);
+  setFocused(0);
   scheduleFitAll(100);
 
   // Default to zen mode on launch (hide launchbar + sidebar) if not already in zen
@@ -118,42 +73,26 @@ export async function launchSession(): Promise<void> {
 // repasser par /api/launch — les PTYs sont déjà spawnés côté serveur, on
 // branche juste les xterm + WebSocket dessus.
 export async function restoreSession(
-  session: { cwd: string; engine: string; noPilot: boolean; trustMode: boolean },
+  session: { cwd: string; engine: string; trustMode: boolean },
   indices: number[],
 ): Promise<void> {
-  const { cwd, engine: e, noPilot: np, trustMode: tm } = session;
+  const { cwd, engine: e, trustMode: tm } = session;
   setState('engine', e);
-  setState('noPilot', np);
   setState('trustMode', tm);
 
   const cwdInput = document.getElementById('cwd-input') as HTMLInputElement;
   if (cwdInput) cwdInput.value = cwd;
 
-  // workerCount = nombre de panes hors pilot (slot 0 quand !noPilot)
-  const workerIndices = np ? indices : indices.filter(i => i !== 0);
-  const wc = workerIndices.length;
+  const wc = indices.length;
   setState('workerCount', wc);
 
   await buildWorkerPanes(wc);
-
-  const pilotPane = document.querySelector('.terminal-pane.pilot');
-  const resizeHandle = document.getElementById('resize-handle');
-  if (np) {
-    if (pilotPane) pilotPane.remove();
-    if (resizeHandle) resizeHandle.classList.add('hidden');
-  } else {
-    if (resizeHandle) resizeHandle.classList.remove('hidden');
-    const grid = document.getElementById('workers-grid')!;
-    if (!document.querySelector('.terminal-pane.pilot')) {
-      grid.insertAdjacentHTML('beforebegin', paneHeader('Pilot', 0, true));
-    }
-  }
 
   document.getElementById('welcome')!.classList.add('hidden');
   document.getElementById('terminals')!.classList.remove('hidden');
   document.getElementById('btn-start')!.classList.add('hidden');
   document.getElementById('btn-stop')!.classList.remove('hidden');
-  const infoBase = `${cwd} (${e}${np ? ', no pilot' : ''}${tm ? ', trust' : ', safe'})`;
+  const infoBase = `${cwd} (${e}${tm ? ', trust' : ', safe'})`;
   document.getElementById('session-info')!.textContent = infoBase + ' · resumed';
   document.getElementById('broadcast-bar')!.classList.remove('hidden');
 
@@ -173,7 +112,7 @@ export async function restoreSession(
     createTerminal(i);
   }
 
-  setFocused(np ? 0 : 0);
+  setFocused(indices[0] ?? 0);
   scheduleFitAll(100);
 
   // Auto-zen comme launchSession (cohérence UX) — sauf si déjà appliqué
@@ -237,8 +176,7 @@ export async function buildWorkerPanes(count: number): Promise<void> {
   grid.style.gridTemplateColumns = '';
   grid.className = 'workers-flex';
 
-  const startIdx = noPilot ? 0 : 1;
-  const indices = Array.from({ length: count }, (_, i) => startIdx + i);
+  const indices = Array.from({ length: count }, (_, i) => i);
   const wantSet = new Set(indices);
 
   let tree: LayoutNode | null = null;

@@ -2,7 +2,7 @@
 // Auto-restart wrapper for fast-vibe server
 // Restarts the server on crash with exponential backoff
 
-import { spawn, exec, ChildProcess } from 'child_process';
+import { spawn, exec, execSync, ChildProcess } from 'child_process';
 import path from 'path';
 
 const SERVER: string = path.join(__dirname, 'server.js');
@@ -89,16 +89,44 @@ function start(): void {
   });
 }
 
+// Arrête le serveur enfant en garantissant qu'aucun process claude/cmd ne
+// survit en orphelin.
+//
+// Windows : node traduit child.kill('SIGINT') en TerminateProcess — le serveur
+// est tué brutalement, son handler `process.on('SIGINT', cleanup)` ne tourne
+// PAS, et les arbres `cmd.exe → claude.exe` qu'il a spawné deviennent
+// orphelins (fuite ~200 MB × N à chaque arrêt/restart superviseur). On tue donc
+// tout l'arbre du child via `taskkill /T /F` tant qu'il est encore vivant pour
+// pouvoir le walker. L'état de session est déjà persisté en continu côté serveur
+// (.session-state.json sur chaque mutation), donc pas besoin d'arrêt gracieux.
+//
+// POSIX : SIGINT/SIGTERM sont délivrés proprement → cleanup() tourne et fait
+// killAll(). On ajoute un SIGKILL de backstop si le child traîne au-delà du délai.
+function shutdownChild(signal: NodeJS.Signals): void {
+  if (!child) return;
+  const pid = child.pid;
+  if (process.platform === 'win32' && pid) {
+    try {
+      execSync(`taskkill /T /F /PID ${pid}`, { stdio: 'ignore', timeout: 5000, windowsHide: true });
+    } catch { /* déjà mort, ou perms — le kill() ci-dessous couvrira */ }
+    try { child.kill(); } catch { /* gone */ }
+  } else {
+    try { child.kill(signal); } catch { /* gone */ }
+    // Backstop : si le serveur ne s'est pas arrêté après 2.5s, on force.
+    setTimeout(() => { try { child?.kill('SIGKILL'); } catch { /* gone */ } }, 2500).unref();
+  }
+}
+
 process.on('SIGINT', () => {
   stopping = true;
   console.log(`[${ts()}] [supervisor] SIGINT — shutting down`);
-  if (child) child.kill('SIGINT');
+  shutdownChild('SIGINT');
   setTimeout(() => process.exit(0), 3000);
 });
 
 process.on('SIGTERM', () => {
   stopping = true;
-  if (child) child.kill('SIGTERM');
+  shutdownChild('SIGTERM');
   setTimeout(() => process.exit(0), 3000);
 });
 

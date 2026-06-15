@@ -20,7 +20,6 @@ export interface TerminalEntry {
 export let workerCount = 4;
 export let previewUrl = '';
 export let engine = 'claude';
-export let noPilot = true;
 export let trustMode = false;
 export let useWSL = false;
 export let autoFocus = true;
@@ -28,6 +27,7 @@ export let autoFollow = false;
 export let theme = 'dark';
 export let suggestMode = 'off';
 export let localSTT = false;
+export let autoCompactIdleMin = 0;
 export let expandedIndex = -1;
 export let focusedIndex = 0;
 export let launched = false;
@@ -51,7 +51,6 @@ const setters = {
   workerCount:     (v: number) => { workerCount = v; },
   previewUrl:      (v: string) => { previewUrl = v; },
   engine:          (v: string) => { engine = v; },
-  noPilot:         (v: boolean) => { noPilot = v; },
   trustMode:       (v: boolean) => { trustMode = v; },
   useWSL:          (v: boolean) => { useWSL = v; },
   autoFocus:       (v: boolean) => { autoFocus = v; },
@@ -59,6 +58,7 @@ const setters = {
   theme:           (v: string) => { theme = v; },
   suggestMode:     (v: string) => { suggestMode = v; },
   localSTT:        (v: boolean) => { localSTT = v; },
+  autoCompactIdleMin: (v: number) => { autoCompactIdleMin = v; },
   expandedIndex:   (v: number) => { expandedIndex = v; },
   focusedIndex:    (v: number) => { focusedIndex = v; },
   launched:        (v: boolean) => { launched = v; },

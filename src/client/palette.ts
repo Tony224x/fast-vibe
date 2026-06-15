@@ -6,7 +6,7 @@
 // ────────────────────────────────────────────────────────────
 
 import {
-  launched, noPilot, workerCount, focusedIndex, theme, terminals, unreadTerminals, setState,
+  launched, workerCount, focusedIndex, theme, terminals, unreadTerminals, setState,
 } from './state';
 import { setFocused, toggleExpand } from './terminal';
 import {
@@ -50,8 +50,8 @@ let lastFocusBeforeOpen: HTMLElement | null = null;
 // ── Registry ──
 
 function paneLabel(i: number): string {
-  if (!noPilot && i === 0) return 'Pilot';
-  return `Worker ${noPilot ? i + 1 : i}`;
+  // Plus de pilot (retiré du produit) : panes 1-indexés, tous des workers.
+  return `Worker ${i + 1}`;
 }
 
 function paneDotColor(i: number): string {
@@ -65,7 +65,7 @@ function paneDotColor(i: number): string {
 
 function buildRegistry(): PaletteCommand[] {
   const cmds: PaletteCommand[] = [];
-  const total = noPilot ? workerCount : 1 + workerCount;
+  const total = workerCount;
 
   // PANES — jump-to, first so a blind Ctrl+K → Enter lands on a sane pane.
   if (launched) {

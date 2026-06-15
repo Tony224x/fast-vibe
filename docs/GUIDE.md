@@ -39,16 +39,16 @@ npm run app      # Mode fenêtre native (sans barre d'URL)
 
 | Paramètre | Description |
 |-----------|-------------|
-| Workers | Nombre d'instances parallèles (1-8) |
+| Workers | Nombre d'instances parallèles (1-8, cap `MAX_WORKERS`) ; un avertissement RAM apparaît au-delà de 6 |
 | Engine | `Claude Code` ou `Kiro CLI` |
-| No Pilot | Coché = pas d'orchestrateur, tous les terminaux sont des workers indépendants |
+| Auto-compact idle | Minutes d'inactivité avant `/compact` automatique d'un worker (0 = désactivé ; Claude uniquement) |
 | Trust Mode | Coché = bypass des permissions. Décoché (défaut) = mode safe, les CLI demandent confirmation |
 | Preview URL | URL à charger dans le panneau de prévisualisation |
 
 ## Engines
 
-| Engine | Mode safe (défaut) | Mode trust | Pilote |
-|--------|--------------------|------------|--------|
+| Engine | Mode safe (défaut) | Mode trust | Auto-compact idle |
+|--------|--------------------|------------|-------------------|
 | Claude Code | `claude` | `claude --dangerously-skip-permissions` | ✅ |
 | Kiro CLI | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` | ❌ |
 
@@ -87,9 +87,9 @@ Lance le serveur et ouvre automatiquement une fenêtre Chrome/Edge en mode appli
 - Saisir une URL (ex: `http://localhost:3000`) et cliquer `→`
 - `↻` pour rafraîchir
 
-## Mode pilote (Claude Code)
+## Piloter un worker via l'API REST
 
-En mode pilote, le terminal 0 est l'orchestrateur. Il contrôle les workers via l'API REST :
+Chaque worker est une session CLI indépendante. On peut en piloter n'importe lequel par programme (depuis un script, un autre outil, ou un worker qui appelle `curl`) :
 
 ```bash
 # Envoyer une tâche au worker 2

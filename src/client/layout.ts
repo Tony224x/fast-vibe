@@ -10,7 +10,7 @@
 // rebuild and re-slotting it into the new shell that has the same id (term-N).
 
 import { ICONS } from './icons';
-import { noPilot, activeSpace, setState } from './state';
+import { activeSpace, setState } from './state';
 import { escapeHtml, postJson } from './utils';
 import { QUICK_PROMPTS } from './prompts';
 
@@ -332,18 +332,17 @@ export function findGroupPanes(tree: LayoutNode | null, groupId: string): number
 // ── Pane HTML template ──
 
 export function paneLabel(index: number): string {
-  if (index === 0 && !noPilot) return 'Pilot';
-  return noPilot ? `Worker ${index + 1}` : `Worker ${index}`;
+  return `Worker ${index + 1}`;
 }
 
-function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]; active: number } | null, isPilot: boolean): string {
+function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]; active: number } | null): string {
   const tabBar = tabs ? `
         <span class="pane-tab-nav">
           <button class="btn-pane-action btn-tab-prev" data-action="tab-prev" data-index="${index}" title="Previous tab">${ICONS.chevronLeft}</button>
           <span class="pane-tab-pos">${tabs.siblings.indexOf(index) + 1}/${tabs.siblings.length}</span>
           <button class="btn-pane-action btn-tab-next" data-action="tab-next" data-index="${index}" title="Next tab">${ICONS.chevronRight}</button>
         </span>` : '';
-  const deleteBtn = isPilot ? '' : `<button class="btn-pane-action btn-ctx-danger" data-action="delete" data-index="${index}" data-tooltip="Delete worker" title="Delete">${ICONS.trash}</button>`;
+  const deleteBtn = `<button class="btn-pane-action btn-ctx-danger" data-action="delete" data-index="${index}" data-tooltip="Delete worker" title="Delete">${ICONS.trash}</button>`;
   return `<div class="pane-header" draggable="true">
         <span class="pane-title">${escapeHtml(label)}<span class="unread-dot"></span></span>
         <span class="pane-status">
@@ -384,9 +383,8 @@ function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]
 }
 
 function paneShellHtml(index: number, tabs: { siblings: number[]; active: number } | null): string {
-  const isPilot = index === 0 && !noPilot;
-  const cls = `terminal-pane ${isPilot ? 'pilot' : 'worker'}${tabs ? ' in-tabs' : ''}`;
-  const header = paneHeaderHtml(index, paneLabel(index), tabs, isPilot);
+  const cls = `terminal-pane worker${tabs ? ' in-tabs' : ''}`;
+  const header = paneHeaderHtml(index, paneLabel(index), tabs);
   return `<div class="${cls}" data-index="${index}" draggable="false">${header}<div class="pane-body" id="term-${index}"></div></div>`;
 }
 

@@ -1,6 +1,6 @@
 # fast-vibe
 
-Web-based terminal multiplexer that runs **N AI coding instances** in parallel (Claude Code or Kiro CLI), with a control API, drag-to-split layout, spaces/groups, live preview, context management, voice dictation, and session persistence across restarts. Default config : **4 Claude workers, no pilot**. Optional **pilot mode** turns terminal 0 into an orchestrator that dispatches work to the others via REST.
+Web-based terminal multiplexer that runs **N AI coding instances** in parallel (Claude Code or Kiro CLI), with a control API, drag-to-split layout, spaces/groups, live preview, context management, voice dictation, and session persistence across restarts. Default config : **4 independent Claude workers**. Each worker is a full CLI session; drive any of them programmatically via REST.
 
 ![Four Claude workers running in parallel, with the Spaces sidebar](docs/img/02-sidebar-and-launch.png)
 
@@ -9,7 +9,7 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
 │  Spaces  │  [📁 /path/to/project]  [⚙] [Start] │          │
 │ ──────── ├──────────────┬──────────────────────┤  Status  │
 │ Default  │   Worker 0   │   Worker 1 / Tab     │   Panel  │
-│ Group A  │  (or Pilot)  │                      │  compact │
+│ Group A  │              │                      │  compact │
 │ Group B  ├──────────────┼──────────────────────┤  clear   │
 │   +      │   Worker 2   │   Worker 3   │ ⋯ │   │  verify  │
 │          │              │                      │  copy    │
@@ -18,9 +18,9 @@ Web-based terminal multiplexer that runs **N AI coding instances** in parallel (
                   to split (top/right/bottom/left)
                   or drop center to stack as tabs
 
-                 Default : 4 workers, no pilot.
-              Opt-in pilot mode turns Worker 0 into
-            an orchestrator that drives the others via REST.
+                 Default : 4 independent workers.
+            Each is a full CLI session; drive any of them
+                  programmatically via the REST API.
 ```
 
 ## Features
@@ -44,11 +44,12 @@ Each pane header exposes the full action bar — composer, next-steps, prompts, 
 - **Multi-engine** — Claude Code or Kiro CLI.
 - **Safe by default** — runs without permission bypass; enable Trust Mode in settings to skip prompts.
 - **WSL support** — launch CLI inside WSL from a Windows host.
-- **No-Pilot mode (default)** — N independent workers, no orchestrator. Best for parallel exploration.
-- **Pilot + Workers (opt-in)** — turn off "No pilot" in settings to make terminal 0 an orchestrator that dispatches tasks to the others via REST (Agent tool disabled in pilot, forced curl).
+- **N independent workers** — every terminal is a standalone CLI session; no orchestrator. Best for parallel exploration. Drive any worker programmatically via the REST API.
+- **Worker cap & RAM guard** — up to 8 workers (`MAX_WORKERS`); a warning appears past 6 live workers since each CLI is a heavyweight process.
+- **Idle auto-compact (Claude)** — optionally `/compact` a worker automatically after it sits idle at a prompt for a configurable number of minutes (`autoCompactIdleMin`), to keep memory in check.
 - **Session persistence (3.1)** — each Claude worker spawns with `--session-id <uuid>` and reattaches via `--resume <uuid>` after server restart. State is serialized to `.session-state.json`. If the resume UUID is unknown (e.g. `~/.claude` wiped), it is detected semantically (`No conversation found`) and the worker auto-restarts on a fresh UUID instead of leaving the user stranded.
 
-<img src="docs/img/04-settings-modal.png" alt="Settings modal — engine, no-pilot, trust mode, WSL, voice locale, theme" width="520">
+<img src="docs/img/04-settings-modal.png" alt="Settings modal — engine, worker count, auto-compact, trust mode, WSL, voice locale, theme" width="520">
 
 ### Voice dictation (3.1)
 
@@ -97,11 +98,11 @@ Press `?` anywhere for the quick guide :
 ![Launch bar with project directory and Start button](docs/img/06-launchbar.png)
 
 1. Open `http://localhost:3333`, click the directory input to browse folders.
-2. **Default config**: 4 Claude workers, no pilot. Tweak engine, worker count, no-pilot, trust mode, voice, theme, etc. in **Settings** (⚙).
+2. **Default config**: 4 independent Claude workers. Tweak engine, worker count, idle auto-compact, trust mode, voice, theme, etc. in **Settings** (⚙).
 3. Click **Start** — spawns terminals with the selected engine. If a previous session is found in `.session-state.json`, a restore banner offers to resume it.
 4. Rearrange panes by dragging headers; spawn / delete workers at runtime.
 5. Hold **Ctrl+Space** to dictate into the focused pane (requires the whisper sidecar — see Install).
-6. In pilot mode (opt-in), terminal 0 becomes the **pilot** and controls workers via `curl` (Agent tool is disabled):
+6. Drive any worker programmatically via the REST control API — e.g. from another tool, a script, or one worker shelling out with `curl`:
 
 ```bash
 # Send a task to worker 2
@@ -172,7 +173,7 @@ npm run typecheck
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/api/settings` | Read settings |
-| `POST` | `/api/settings` | Update settings (`workers`, `previewUrl`, `engine`, `noPilot`, `trustMode`, `useWSL`, `autoFocus`, `autoFollow`, `theme`, `suggestMode`, `logsEnabled`, `localSTT`) |
+| `POST` | `/api/settings` | Update settings (`workers`, `previewUrl`, `engine`, `autoCompactIdleMin`, `trustMode`, `useWSL`, `autoFocus`, `autoFollow`, `theme`, `suggestMode`, `logsEnabled`, `localSTT`) |
 | `POST` | `/api/launch` | Start terminals `{"cwd":"/path","workers":4}` |
 | `POST` | `/api/stop` | Stop all terminals |
 | `GET` | `/api/status` | Status of all terminals |
@@ -184,7 +185,7 @@ npm run typecheck
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `POST` | `/api/terminal/spawn` | Spawn a new worker, returns `{index}` |
-| `DELETE` | `/api/terminal/:id` | Remove a worker (pilot is protected in pilot mode) |
+| `DELETE` | `/api/terminal/:id` | Remove a worker |
 | `POST` | `/api/terminal/:id/send` | Send text `{"text":"..."}` |
 | `GET` | `/api/terminal/:id/output?last=N` | Read last N chars (ANSI stripped) |
 | `POST` | `/api/terminal/:id/compact` | Compact context (keep summary) |
@@ -223,10 +224,10 @@ npm run typecheck
 
 ### Engine modes
 
-| Engine | Safe mode (default) | Trust mode | Pilot support |
-|--------|---------------------|------------|---------------|
-| `claude` | `claude` | `claude --dangerously-skip-permissions` | ✅ with system prompt |
-| `kiro` | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` | ❌ (use no-pilot mode) |
+| Engine | Safe mode (default) | Trust mode | Idle auto-compact |
+|--------|---------------------|------------|-------------------|
+| `claude` | `claude` | `claude --dangerously-skip-permissions` | ✅ |
+| `kiro` | `kiro-cli chat --tui` | `kiro-cli chat --trust-all-tools --tui` | ❌ |
 
 ## Stack
 
