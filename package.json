@@ -13,7 +13,7 @@
     "start:raw": "node dist/server.js",
     "test": "jest --verbose",
     "test:watch": "jest --watch",
-    "test:ci": "jest --ci --coverage",
+    "test:ci": "jest --ci --coverage --runInBand",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit"
   },
   "dependencies": {
