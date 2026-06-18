@@ -5,6 +5,7 @@ jest.mock('fs', () => {
 });
 
 import { PtyManager, ANSI_RE, MAX_BUFFER, MAX_WORKERS } from '../src/pty-manager';
+import * as pty from 'node-pty';
 
 describe('PtyManager', () => {
   let mgr: PtyManager;
@@ -418,6 +419,62 @@ describe('PtyManager', () => {
     test('suggestMode is set from launchAll opts', () => {
       mgr.launchAll('/tmp', 1, { suggestMode: 'ai' });
       expect(mgr.suggestMode).toBe('ai');
+    });
+  });
+
+  describe('per-worker cwd', () => {
+    test('spawn uses slot.cwd over the global/explicit cwd', () => {
+      const spawnSpy = jest.spyOn(pty, 'spawn');
+      mgr.launchAll('/global', 1, { engine: 'claude' });
+      // index 0 (spawn synchrone du stagger), pas de slot.cwd → workdir global
+      expect((spawnSpy.mock.calls[0][2] as any).cwd).toBe('/global');
+
+      // re-pointe le worker puis respawn : slot.cwd doit gagner même si on
+      // passe explicitement le cwd global en argument de spawn().
+      mgr.kill(0);
+      spawnSpy.mockClear();
+      mgr.slots[0].cwd = '/perworker';
+      mgr.spawn(0, '/global');
+      expect((spawnSpy.mock.calls[0][2] as any).cwd).toBe('/perworker');
+      spawnSpy.mockRestore();
+    });
+
+    test('changeWorkerCwd: set cwd + régénère le sessionId (claude) + resume=false', () => {
+      mgr.launchAll('/global', 1, { engine: 'claude' });
+      const oldSession = mgr.slots[0].sessionId;
+      expect(oldSession).toBeTruthy();
+      const ok = mgr.changeWorkerCwd(0, '/newdir');
+      expect(ok).toBe(true);
+      expect(mgr.slots[0].cwd).toBe('/newdir');
+      expect(mgr.slots[0].sessionId).not.toBe(oldSession);
+      expect(mgr.slots[0].resume).toBe(false);
+    });
+
+    test('changeWorkerCwd: kiro garde sessionId null', () => {
+      mgr.launchAll('/global', 1, { engine: 'kiro' });
+      expect(mgr.changeWorkerCwd(0, '/newdir')).toBe(true);
+      expect(mgr.slots[0].cwd).toBe('/newdir');
+      expect(mgr.slots[0].sessionId).toBeNull();
+    });
+
+    test('changeWorkerCwd: false hors borne / worker removed', () => {
+      mgr.launchAll('/global', 2, {});
+      expect(mgr.changeWorkerCwd(99, '/x')).toBe(false);
+      expect(mgr.changeWorkerCwd(-1, '/x')).toBe(false);
+      mgr.removeWorker(0);
+      expect(mgr.changeWorkerCwd(0, '/x')).toBe(false);
+    });
+
+    test('restoreAll relit le cwd par worker (absent → global)', () => {
+      mgr.restoreAll({
+        cwd: '/global', engine: 'claude', trustMode: false, useWSL: false,
+        workers: [
+          { index: 0, sessionId: 'uuid-a', cwd: '/proj-a' },
+          { index: 1, sessionId: 'uuid-b' },
+        ],
+      });
+      expect(mgr.slots[0].cwd).toBe('/proj-a');
+      expect(mgr.slots[1].cwd).toBeUndefined();
     });
   });
 });

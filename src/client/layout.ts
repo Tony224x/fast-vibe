@@ -374,6 +374,7 @@ function paneHeaderHtml(index: number, label: string, tabs: { siblings: number[]
             <button class="btn-pane-action" data-action="compact" data-index="${index}" data-tooltip="Compact context" title="Compact">${ICONS.layers}</button>
             <button class="btn-pane-action" data-action="clear" data-index="${index}" data-tooltip="Clear context" title="Clear">${ICONS.eraser}</button>
             <button class="btn-pane-action" data-action="restart" data-index="${index}" data-tooltip="Restart" title="Restart">${ICONS.refresh}</button>
+            <button class="btn-pane-action" data-action="change-folder" data-index="${index}" data-tooltip="Change folder" title="Change folder">${ICONS.folderOpen}</button>
           </span>
           <button class="btn-pane-action btn-overflow-toggle" data-action="overflow-toggle" data-index="${index}" data-tooltip="More actions" title="More">${ICONS.moreHorizontal}</button>
           ${deleteBtn}

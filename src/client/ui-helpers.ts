@@ -96,6 +96,31 @@ export async function restartTerminal(id: number): Promise<void> {
   }
 }
 
+// Ouvre le picker natif puis re-pointe le worker sur le dossier choisi. Le
+// worker est respawné dans le nouveau dossier (silencieux, comme Restart).
+export async function changeFolderTerminal(id: number): Promise<void> {
+  let folder: string | null = null;
+  try {
+    const pick = await postJson('/api/pick-folder');
+    folder = (await pick.json()).folder;
+  } catch {
+    showToast('Folder picker failed');
+    return;
+  }
+  if (!folder) return; // annulé
+  try {
+    const res = await postJson(`/api/terminal/${id}/cwd`, { cwd: folder });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(err.error || `Failed to change folder (${res.status})`);
+      return;
+    }
+    showToast(`Terminal ${id} → ${folder}`);
+  } catch {
+    showToast('Failed to change folder');
+  }
+}
+
 export async function copyOutput(id: number): Promise<void> {
   const res = await fetch(`/api/terminal/${id}/output?last=5000`);
   const data = await res.json();

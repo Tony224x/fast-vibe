@@ -328,6 +328,47 @@ describe('Terminal control API', () => {
     });
   });
 
+  describe('POST /api/terminal/:id/cwd', () => {
+    test('changes worker folder with a valid directory', async () => {
+      const res = await request(app)
+        .post('/api/terminal/0/cwd')
+        .set(HEADER)
+        .send({ cwd: process.cwd() });
+      expect(res.status).toBe(200);
+      expect(res.body.ok).toBe(true);
+      expect(res.body.id).toBe(0);
+      expect(res.body.cwd).toBe(process.cwd());
+      // Le cwd doit être posé sur le slot (et persisté).
+      expect(ptyManager.slots[0].cwd).toBe(process.cwd());
+    });
+
+    test('returns 400 without cwd', async () => {
+      const res = await request(app)
+        .post('/api/terminal/0/cwd')
+        .set(HEADER)
+        .send({});
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/cwd/i);
+    });
+
+    test('returns 400 for a non-existent directory', async () => {
+      const res = await request(app)
+        .post('/api/terminal/0/cwd')
+        .set(HEADER)
+        .send({ cwd: '/nonexistent-fastvibe-xyz-123' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toMatch(/does not exist/i);
+    });
+
+    test('returns 404 for an out-of-range id', async () => {
+      const res = await request(app)
+        .post('/api/terminal/99/cwd')
+        .set(HEADER)
+        .send({ cwd: process.cwd() });
+      expect(res.status).toBe(404);
+    });
+  });
+
   describe('GET /api/terminal/:id/output', () => {
     test('returns terminal output', async () => {
       const res = await request(app).get('/api/terminal/0/output');

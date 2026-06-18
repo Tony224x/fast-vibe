@@ -43,7 +43,7 @@ interface SessionState {
   engine: string;
   trustMode: boolean;
   useWSL: boolean;
-  workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
+  workers: Array<{ index: number; sessionId: string | null; removed?: boolean; cwd?: string }>;
 }
 
 function persistSessionState(): void {
@@ -73,6 +73,7 @@ function schedulePersistSessionState(): void {
         index: i,
         sessionId: s.sessionId ?? null,
         removed: s.removed,
+        cwd: s.cwd,
       })),
     };
     const payload = JSON.stringify(state, null, 2);
@@ -433,6 +434,26 @@ app.post('/api/terminal/:id/clear', (req: Request, res: Response) => {
   const id = parseInt(req.params.id as string, 10);
   const ok = ptyManager.sendCommand(id, '/clear');
   res.json({ ok, terminal: id, action: 'clear' });
+});
+
+// Change le dossier de travail d'un worker (respawn dans le nouveau dossier).
+app.post('/api/terminal/:id/cwd', (req: Request, res: Response) => {
+  const id = parseInt(req.params.id as string, 10);
+  if (isNaN(id) || id < 0 || id >= ptyManager.slots.length) {
+    return res.status(404).json({ error: 'Terminal not found' });
+  }
+  const cwd = req.body.cwd;
+  if (!cwd || typeof cwd !== 'string') {
+    return res.status(400).json({ error: 'Missing cwd' });
+  }
+  if (!fs.existsSync(cwd)) {
+    return res.status(400).json({ error: `Directory does not exist: ${cwd}` });
+  }
+  const ok = ptyManager.changeWorkerCwd(id, cwd);
+  if (!ok) {
+    return res.status(400).json({ error: 'Cannot change folder (worker removed?)' });
+  }
+  res.json({ ok: true, id, cwd });
 });
 
 app.get('/api/terminal/:id/output', (req: Request, res: Response) => {

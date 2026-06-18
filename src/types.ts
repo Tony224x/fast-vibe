@@ -51,6 +51,10 @@ export interface Slot {
   strippedCache: string;
   restartCount: number;
   removed?: boolean;
+  // Dossier de travail propre au worker. Surcharge le cwd global du PtyManager
+  // quand défini (changement de workspace par worker). Absent = cwd global.
+  // Persisté dans .session-state.json et relu au restore.
+  cwd?: string;
   // UUID v4 — passé à `claude --session-id <uuid>` au 1er lancement,
   // puis utilisé avec `claude --resume <uuid>` pour reprendre la conversation
   // après redémarrage du serveur. Null pour kiro (pas de session id).

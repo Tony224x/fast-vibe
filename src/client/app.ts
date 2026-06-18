@@ -8,7 +8,7 @@ import { togglePreview, loadPreview, refreshPreview, toggleZen, toggleSidebar } 
 import { initAutocomplete } from './autocomplete';
 import { toggleExpand, setFocused, fitAll, scheduleFitAll } from './terminal';
 import { pollStatus, pollMiniMap, initSidebarClickDelegation } from './sidebar';
-import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, sendBroadcast, inlineConfirm, initSidebarResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
+import { compactTerminal, clearTerminal, restartTerminal, removeTerminal, changeFolderTerminal, sendBroadcast, inlineConfirm, initSidebarResize, verifyTerminal, copyOutput, nextStepsTerminal, sendQuickPrompt, QUICK_PROMPTS, improveBroadcastPrompt, improveComposePrompt, sendComposePrompt } from './ui-helpers';
 import { escapeHtml, postJson, deleteJson } from './utils';
 import { initHelp } from './help';
 import { initPalette } from './palette';
@@ -159,6 +159,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (action === 'compact') compactTerminal(idx);
     else if (action === 'clear') inlineConfirm(btn, () => clearTerminal(idx));
     else if (action === 'restart') restartTerminal(idx);
+    else if (action === 'change-folder') changeFolderTerminal(idx);
     else if (action === 'delete') removeTerminal(idx);
     else if (action === 'overflow-toggle') {
       const actions = btn.closest('.pane-actions');

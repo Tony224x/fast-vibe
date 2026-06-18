@@ -140,7 +140,10 @@ export class PtyManager {
     const slot = this.slots[index];
     if (slot.pty) return slot.pty;
 
-    const workdir = cwd || this.cwd;
+    // Priorité : cwd propre au worker (slot.cwd) > cwd explicite passé en
+    // argument > cwd global. Un seul point de résolution : tous les chemins de
+    // spawn (stagger, restart, restore) honorent ainsi le workspace par worker.
+    const workdir = slot.cwd || cwd || this.cwd;
 
     // ── Stratégie de spawn par engine ──
     //
@@ -647,6 +650,28 @@ export class PtyManager {
     }, delay);
   }
 
+  // Change le dossier de travail d'un worker et le respawn dans ce dossier.
+  // Le cwd d'un process déjà lancé ne peut pas changer → on tue et on relance.
+  // Pour claude, on démarre une session vierge (nouveau sessionId, resume=false)
+  // car l'ancienne conversation pointait sur l'ancien projet. Retourne false si
+  // l'index est hors borne ou le slot est un tombstone (removed).
+  changeWorkerCwd(index: number, cwd: string): boolean {
+    if (index < 0 || index >= this.slots.length) return false;
+    const slot = this.slots[index];
+    if (slot.removed) return false;
+    slot.cwd = cwd;
+    if (this.engine === 'claude') {
+      slot.sessionId = randomUUID();
+      slot.resume = false;
+    }
+    log('change-cwd', `terminal=${index} cwd=${cwd} engine=${this.engine}`);
+    // restart() reset crashed/restartCount, kill puis respawn différé. Le
+    // respawn lit slot.cwd via spawn() → démarre dans le nouveau dossier.
+    this.restart(index);
+    this.notifyStateChange();
+    return true;
+  }
+
   sendInput(index: number, text: string): boolean {
     if (index >= this.slots.length) return false;
     const slot = this.slots[index];
@@ -814,7 +839,7 @@ export class PtyManager {
     engine: string;
     trustMode: boolean;
     useWSL: boolean;
-    workers: Array<{ index: number; sessionId: string | null; removed?: boolean }>;
+    workers: Array<{ index: number; sessionId: string | null; removed?: boolean; cwd?: string }>;
   }): void {
     this.killAll();
     this.cwd = state.cwd || process.cwd();
@@ -833,6 +858,7 @@ export class PtyManager {
         chunks: [], chunksTotalLen: 0, joinedCache: '', strippedCache: '', dirty: false,
         restartCount: 0,
         sessionId: w?.sessionId ?? null,
+        cwd: w?.cwd,
         resume: !!(w?.sessionId),
         removed: w?.removed,
         crashed: false,
