@@ -7,9 +7,9 @@
 #   powershell -File scripts/ci-local.ps1            # typecheck + build + test
 #   powershell -File scripts/ci-local.ps1 -SkipTest  # iteration rapide (sans jest)
 #
-# Differe du .yml sur un seul point : pas de `npm ci` (reinstall destructive
+# Differe du .yml sur un seul point : pas de `pnpm install` (reinstall
 # des node_modules locaux). On suppose les deps deja installees ; lance
-# `npm ci` toi-meme si package-lock a change.
+# `pnpm install --frozen-lockfile` toi-meme si pnpm-lock a change.
 
 param([switch]$SkipTest)
 
@@ -30,9 +30,9 @@ function Invoke-Step([string]$name, [scriptblock]$action) {
   }
 }
 
-Invoke-Step 'typecheck' { npm run typecheck }
-Invoke-Step 'build'     { npm run build }
-if (-not $SkipTest) { Invoke-Step 'test' { npm run test:ci } }
+Invoke-Step 'typecheck' { pnpm run typecheck }
+Invoke-Step 'build'     { pnpm run build }
+if (-not $SkipTest) { Invoke-Step 'test' { pnpm run test:ci } }
 
 Write-Host ""
 if ($script:failed.Count -gt 0) {

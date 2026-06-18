@@ -65,7 +65,7 @@ Each pane header exposes the full action bar — composer, next-steps, prompts, 
 - **Directory bookmarks** — favorite paths persisted across restarts.
 - **Native folder picker** + **directory browser** with WSL-aware path handling.
 - **Zen mode** (`Ctrl+Shift+F`) — hide sidebar and launch bar.
-- **Native app mode** — `npm run app` opens a Chrome/Edge window without browser chrome.
+- **Native app mode** — `pnpm run app` opens a Chrome/Edge window without browser chrome.
 - **Auto-focus** — switch focus to the terminal that just finished its task (configurable).
 - **Auto-follow** — opt-in forced auto-scroll (off by default).
 - **Themes** — dark / light / system.
@@ -127,10 +127,10 @@ curl -s -X DELETE http://localhost:3333/api/terminal/3
 ```bash
 git clone <repo-url>
 cd fast-vibe
-npm install
+pnpm install
 ```
 
-> Requires Node.js 18+ and one of:
+> Requires Node.js 18+, [pnpm](https://pnpm.io), and one of:
 > - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code)
 > - [Kiro CLI](https://kiro.dev) (`kiro-cli`)
 >
@@ -147,7 +147,7 @@ pip install -r scripts/whisper_requirements.txt
 
 Then enable **Voice locale** in Settings → the server will spawn the sidecar automatically at boot. Hold **Ctrl+Space** to dictate.
 
-Optional env vars (set before `npm start`):
+Optional env vars (set before `pnpm start`):
 
 ```
 FAST_VIBE_WHISPER_PORT=8765            # sidecar port
@@ -160,10 +160,10 @@ WHISPER_COMPUTE_TYPE=int8              # int8 / float16 / float32
 ## Usage
 
 ```bash
-npm start        # Build + serve → http://localhost:3333
-npm run dev      # Dev mode (TS watch)
-npm test         # Jest test suite
-npm run typecheck
+pnpm start        # Build + serve → http://localhost:3333
+pnpm dev          # Dev mode (TS watch)
+pnpm test         # Jest test suite
+pnpm run typecheck
 ```
 
 ## API

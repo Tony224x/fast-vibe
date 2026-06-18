@@ -3,6 +3,7 @@
   "version": "3.1.0",
   "description": "Web-based terminal multiplexer for 4 parallel Claude Code sessions",
   "main": "dist/server.js",
+  "packageManager": "pnpm@11.7.0",
   "scripts": {
     "build": "tsc && ts-node esbuild.config.ts",
     "build:client": "ts-node esbuild.config.ts",

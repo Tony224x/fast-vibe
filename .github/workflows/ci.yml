@@ -24,28 +24,34 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # pnpm est le gestionnaire de paquets du projet (champ packageManager
+      # dans package.json). action-setup lit ce champ pour la version.
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: '24' # miroir du Node local (24.11.1)
-          cache: npm
+          cache: pnpm
 
-      # npm ci = install reproductible depuis package-lock.json (présent, tracké).
-      # Construit node-pty (seule dépendance native) → attrape une régression
-      # d'install. Les tests le mockent, mais on garde le build natif en CI.
+      # pnpm install --frozen-lockfile = install reproductible depuis
+      # pnpm-lock.yaml (présent, tracké) ; échoue si le lock dérive du
+      # package.json. Construit node-pty (seule dépendance native) → attrape
+      # une régression d'install. Les tests le mockent, mais on garde le build
+      # natif en CI.
       - name: Install
-        run: npm ci
+        run: pnpm install --frozen-lockfile
 
       - name: Typecheck (server + client)
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Build (tsc + esbuild)
-        run: npm run build
+        run: pnpm run build
 
       # test:ci = `jest --ci --coverage --runInBand`. --runInBand (single
       # process, pas de worker pool) est délibéré : sur un runner Windows lent,
       # le pool de workers + coverage + forceExit pouvait se court-circuiter au
       # teardown (un worker pas encore drainé → parent exit 1 SANS échec de
       # test, run rouge fantôme). En in-band il n'y a plus de worker à tuer →
-      # gate déterministe. Coût négligeable (suite ~12s, 157 tests).
-      - name: Test (jest, 157 tests, node-pty mocké)
-        run: npm run test:ci
+      # gate déterministe.
+      - name: Test (jest, node-pty mocké)
+        run: pnpm run test:ci
