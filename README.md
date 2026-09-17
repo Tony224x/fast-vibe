@@ -1,5 +1,15 @@
 # fast-vibe
 
+> **Archivé — plus maintenu.** Dernière version : v3.1.0 (juin 2026).
+>
+> Ce projet n'est plus utilisé par son auteur, qui est passé à d'autres outils. Le dépôt reste
+> **public et lisible en l'état** : le code fonctionne, il n'est simplement plus suivi. Aucune issue
+> ni PR ne sera traitée.
+>
+> Ce qui est documenté ci-dessous reste valable et réutilisable — les 4 workers par défaut, le
+> pilotage par REST, le layout drag-to-split. Licence MIT (champ `license` de `package.json`) :
+> forkez, modifiez, reprenez.
+
 Web-based terminal multiplexer that runs **N AI coding instances** in parallel (Claude Code or Kiro CLI), with a control API, drag-to-split layout, spaces/groups, live preview, context management, voice dictation, and session persistence across restarts. Default config : **4 independent Claude workers**. Each worker is a full CLI session; drive any of them programmatically via REST.
 
 ![Four Claude workers running in parallel, with the Spaces sidebar](docs/img/02-sidebar-and-launch.png)
